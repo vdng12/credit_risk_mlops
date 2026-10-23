@@ -1,0 +1,7 @@
+[project]
+name = "credit-risk-mlops"
+version = "0.1.0"
+description = "Credit Scoring Platform"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = []
