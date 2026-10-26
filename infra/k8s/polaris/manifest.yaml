@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: polaris
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: polaris
+  template:
+    metadata:
+      labels:
+        app: polaris
+    spec:
+      containers:
+      - name: polaris
+        image: apache/polaris:latest
+        env:
+        - name: POLARIS_BOOTSTRAP_CREDENTIALS
+          value: "POLARIS,root,s3cr3t"
+        - name: AWS_ACCESS_KEY_ID
+          value: seaweedfs
+        - name: AWS_SECRET_ACCESS_KEY
+          value: seaweedfs123
+        - name: AWS_REGION
+          value: us-east-1
+        - name: AWS_ENDPOINT_URL_S3
+          value: http://seaweedfs:8333
+        ports:
+        - containerPort: 8181
+        - containerPort: 8182
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: polaris
+spec:
+  selector:
+    app: polaris
+  ports:
+  - name: rest
+    port: 8181
+    targetPort: 8181
+  - name: mgmt
+    port: 8182
+    targetPort: 8182

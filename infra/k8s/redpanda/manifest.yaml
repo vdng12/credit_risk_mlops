@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redpanda
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redpanda
+  template:
+    metadata:
+      labels:
+        app: redpanda
+    spec:
+      containers:
+      - name: redpanda
+        image: redpandadata/redpanda:latest
+        command:
+        - rpk
+        - redpanda
+        - start
+        - --smp
+        - "1"
+        - --overprovisioned
+        - --reserve-memory
+        - 0M
+        - --kafka-addr
+        - PLAINTEXT://0.0.0.0:9092
+        - --advertise-kafka-addr
+        - PLAINTEXT://redpanda:9092
+        ports:
+        - containerPort: 9092
+        volumeMounts:
+        - name: rpdata
+          mountPath: /var/lib/redpanda/data
+      volumes:
+      - name: rpdata
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redpanda
+spec:
+  selector:
+    app: redpanda
+  ports:
+  - port: 9092
+    targetPort: 9092

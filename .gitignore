@@ -15,3 +15,11 @@ __marimo__/
 
 # Environment overrides
 .env
+
+# Generated data
+output/
+*/output/
+
+# Simulator build artifacts
+simulator/dist/
+

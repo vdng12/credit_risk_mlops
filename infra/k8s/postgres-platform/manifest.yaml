@@ -1,0 +1,58 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-platform-init
+data:
+  01-create-dbs.sql: |
+    CREATE DATABASE mlflow;
+    CREATE DATABASE feast;
+    CREATE DATABASE metastore;
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-platform
+  template:
+    metadata:
+      labels:
+        app: postgres-platform
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:16-alpine
+        env:
+        - name: POSTGRES_USER
+          value: platform
+        - name: POSTGRES_PASSWORD
+          value: platform123
+        - name: POSTGRES_DB
+          value: platform
+        ports:
+        - containerPort: 5432
+        volumeMounts:
+        - name: pgdata
+          mountPath: /var/lib/postgresql/data
+        - name: pginit
+          mountPath: /docker-entrypoint-initdb.d
+      volumes:
+      - name: pgdata
+        emptyDir: {}
+      - name: pginit
+        configMap:
+          name: postgres-platform-init
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-platform
+spec:
+  selector:
+    app: postgres-platform
+  ports:
+  - port: 5432
+    targetPort: 5432

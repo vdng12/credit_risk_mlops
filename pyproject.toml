@@ -4,4 +4,25 @@ version = "0.1.0"
 description = "Credit Scoring Platform"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "simulator",
+    "nbformat>=5.11.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "simulator",
+    "numpy>=2.0",
+    "polars>=1.0",
+    "scipy>=1.14",
+    "scikit-learn>=1.6",
+    "lightgbm>=4.6",
+    "kagglehub>=0.3",
+]
+
+[tool.uv.sources]
+simulator = { workspace = true }
+
+[tool.uv.workspace]
+members = ["simulator"]

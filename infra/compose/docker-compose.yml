@@ -1,0 +1,167 @@
+services:
+  # SeaweedFS Mini — master + volume + filer + S3 in one process
+  seaweedfs:
+    image: chrislusf/seaweedfs:latest
+    container_name: seaweedfs
+    command: >
+      mini
+      -s3
+      -s3.port=8333
+      -s3.config=/data/s3.json
+      -dir=/data
+    ports:
+      - "8333:8333" # S3 API
+      - "8888:8888" # Filer UI
+      - "8889:8889" # Filer gRPC
+      - "9333:9333" # Master UI / API
+    volumes:
+      - seaweedfs-data:/data
+      - ./infra/seaweedfs/s3.json:/data/s3.json:ro
+    networks:
+      - risk-net
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -qO- http://localhost:9333/cluster/status || exit 1",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # PostgreSQL — ML platform metadata stores (MLflow backend / Feast registry / metastore)
+  platform-postgres:
+    image: postgres:16-alpine
+    container_name: platform-postgres
+    environment:
+      POSTGRES_USER: ${PLATFORM_PG_USER:-platform}
+      POSTGRES_PASSWORD: ${PLATFORM_PG_PASSWORD:-platform123}
+      POSTGRES_DB: ${PLATFORM_PG_DB:-platform}
+      PGUSER: ${PLATFORM_PG_USER:-platform}
+    ports:
+      - "${PLATFORM_PG_PORT:-5433}:5432"
+    volumes:
+      - platform-postgres-data:/var/lib/postgresql/data
+      - ./infra/postgres/init-platform:/docker-entrypoint-initdb.d:ro
+    networks:
+      - risk-net
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${PLATFORM_PG_USER:-platform} -d ${PLATFORM_PG_DB:-platform} -h localhost",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@risk.io}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin123}
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin-data:/var/lib/pgadmin
+    networks:
+      - risk-net
+    depends_on:
+      platform-postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles:
+      - tools
+
+  # Redpanda — Kafka-compatible broker (C++, no JVM)
+  redpanda:
+    image: redpandadata/redpanda:latest
+    container_name: redpanda
+    command:
+      - redpanda start
+      - --smp 1
+      - --overprovisioned
+      - --reserve-memory 0M
+      - --kafka-addr PLAINTEXT://0.0.0.0:9092
+      - --advertise-kafka-addr PLAINTEXT://redpanda:9092
+    ports:
+      - "9092:9092"
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+    networks:
+      - risk-net
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "rpk cluster health | grep -q Healthy",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Redpanda Console — lightweight Kafka UI (optional)
+  redpanda-console:
+    image: docker.redpanda.com/redpandadata/console:latest
+    container_name: redpanda-console
+    environment:
+      KAFKA_BROKERS: "redpanda:9092"
+    ports:
+      - "8080:8080"
+    networks:
+      - risk-net
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles:
+      - tools
+
+  # Apache Polaris — Iceberg REST catalog
+  polaris:
+    image: apache/polaris:latest
+    container_name: polaris
+    environment:
+      POLARIS_BOOTSTRAP_CREDENTIALS: "POLARIS,root,s3cr3t"
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY:-seaweedfs}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:-seaweedfs123}
+      AWS_REGION: us-east-1
+      AWS_ENDPOINT_URL_S3: http://seaweedfs:8333
+    ports:
+      - "8181:8181"   # REST API
+      - "8182:8182"   # management / health
+    networks:
+      - risk-net
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -sf http://localhost:8182/q/health/ready | grep -q UP || exit 1",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+volumes:
+  seaweedfs-data:
+    driver: local
+  platform-postgres-data:
+    driver: local
+  pgadmin-data:
+    driver: local
+  redpanda-data:
+    driver: local
+
+networks:
+  risk-net:
+    driver: bridge
+    name: risk-net
