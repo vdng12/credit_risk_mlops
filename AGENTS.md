@@ -8,7 +8,7 @@ system. Three layers: Data → ML → Agent.
 Python 3.13+, managed with `uv` (workspace monorepo). Notebooks use marimo.
 
 Current state: LightGBM POC baseline in `notebooks/fit.py` (5-fold CV + held-out
-test), a t-copula synthetic data generator in `simulator/`, and a K8s kind
+test), a t-copula synthetic data generator in `simulator/`, and a K8s k3d
 cluster with 6 services for the ML platform stack.
 
 ---
@@ -100,9 +100,9 @@ Signs of factors 1,2,3,5 are unverified until anchored calibration is re-run.
 
 ---
 
-## Infrastructure (`kind` cluster)
+## Infrastructure (`k3d` cluster)
 
-All services run in a local `kind` Kubernetes cluster (`risk-cluster`).
+All services run in a local `k3d` Kubernetes cluster (`risk-cluster`).
 
 | Service | Pod IP | Host port | Notes |
 |---|---|---|---|
@@ -116,18 +116,18 @@ All services run in a local `kind` Kubernetes cluster (`risk-cluster`).
 ### Commands
 
 ```bash
-bash ops/k8s/kind-up.sh                    # create cluster + deploy all
+bash ops/k8s/k3d-up.sh                    # create cluster + deploy all
 bash ops/k8s/apply-all.sh                  # re-deploy all manifests
 kubectl get pods -o wide                   # check status
 
-kind delete cluster --name risk-cluster    # tear down
+`k3d cluster delete --name risk-cluster    # tear down
 ```
 
 ### Custom image (MLflow)
 
 ```bash
 docker build -t risk-mlflow:latest -f infra/k8s/mlflow/Dockerfile .
-kind load docker-image risk-mlflow:latest --name risk-cluster
+`k3d image import risk-mlflow:latest --name risk-cluster
 ```
 
 ### Port mappings
@@ -156,12 +156,12 @@ kind load docker-image risk-mlflow:latest --name risk-cluster
 │   ├── postgres/init/          # Source OLTP schema + seed
 │   └── seaweedfs/s3.json       # S3 identities (legacy)
 ├── infra/                      # Deployment definitions
-│   ├── kind.yaml               # Cluster config
+│   ├── k3d.yaml               # Cluster config
 │   ├── compose/                # Old docker-compose (reference)
 │   └── k8s/<service>/         # K8s manifests per service
 │       └── manifest.yaml
 ├── ops/                        # Operational scripts
-│   ├── k8s/                    # apply-all.sh, kind-up.sh
+│   ├── k8s/                    # apply-all.sh, k3d-up.sh
 │   └── postgres/               # run-source-postgres.sh
 ├── simulator/                  # Standalone uv project
 │   ├── pyproject.toml          # Own deps (numpy, polars, scipy, sklearn)
@@ -197,7 +197,7 @@ kind load docker-image risk-mlflow:latest --name risk-cluster
 - `uv` for dependency management (workspace monorepo)
 - marimo for notebooks
 - JVM-free stack (Redpanda over Kafka, no Java)
-- Infrastructure is kind (local K8s) — GKE target for prod
+- Infrastructure is k3d (local K8s) — GKE target for prod
 - Two Postgres roles:
   - `postgres-source` (host :5432) — OLTP source system
   - `postgres-platform` (host :5433) — MLflow / Feast / metastore

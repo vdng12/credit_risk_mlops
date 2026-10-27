@@ -100,7 +100,7 @@ The `__main__` CLI drives sinks; note the **hot/cold split** in
 `Simulator.__main__` was verified to run but **sink connections (Postgres,
 S3, Kafka) will hang if the services aren't reachable**. For pure file output
 use the direct `SinkManager.to_parquet` path (as done in validation) or
-ensure the kind cluster services are up.
+ensure the k3d cluster services are up.
 
 ---
 
@@ -110,7 +110,7 @@ ensure the kind cluster services are up.
    preferred"); signs of factors 1,2,3,5 unverified. Re-run `calibrate.py`
    against the real Home Credit CSVs for shipped parameters.
 2. **Sinks integration** — validate `to_postgres` / `to_s3` / `to_kafka`
-   against the running kind stack (postgres-source :5432, seaweedfs :8333,
+   against the running k3d stack (postgres-source :5432, seaweedfs :8333,
    redpanda :9092).
 3. **Label gold layer** — `derive_default_labels_from_frames` assumptions
    tied to the windowed default definition (3 consecutive DPD months within

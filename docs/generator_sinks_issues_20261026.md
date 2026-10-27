@@ -76,7 +76,7 @@ except Exception:
 ```
 
 If S3 is unreachable, the error is silently ignored. This means a run with
-the kind cluster down silently skips all S3 writes without warning.
+the k3d cluster down silently skips all S3 writes without warning.
 
 ---
 

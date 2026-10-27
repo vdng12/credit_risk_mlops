@@ -2,13 +2,13 @@
 
 **Project:** Credit Risk MLOps
 **Repo:** `credit-risk-mlops` (fresh start, moved from `default_risk_mlops`)
-**Cluster:** kind (`risk-cluster`), Kubernetes v1.34.0
+**Cluster:** k3d (`risk-cluster`), Kubernetes v1.34.0
 
 ---
 
 ## 1. Current state
 
-### Running services (kind cluster)
+### Running services (k3d cluster)
 
 | Service | Status | Pod IP | Host port | Notes |
 |---|---|---|---|---|
@@ -27,7 +27,7 @@ configs/                    ← platform-agnostic configs
 └── seaweedfs/s3.json       ← S3 identity config (legacy reference)
 
 infra/                      ← how things are deployed
-├── kind.yaml               ← cluster config (port forwards for all services)
+├── k3d.yaml               ← cluster config (port forwards for all services)
 ├── compose/
 │   └── docker-compose.yml  ← old compose stack (reference/fallback)
 └── k8s/<service>/
@@ -36,7 +36,7 @@ infra/                      ← how things are deployed
 ops/                        ← how you run it
 ├── k8s/
 │   ├── apply-all.sh        ← apply manifests in dependency order
-│   └── kind-up.sh          ← create cluster + apply all
+│   └── k3d-up.sh          ← create cluster + apply all
 └── postgres/
     └── run-source-postgres.sh  ← standalone source PG (old Docker workflow)
 
@@ -50,7 +50,7 @@ notebooks/                  ← ML work
 ## 2. Build log (what was created this session)
 
 ### Cluster bootstrap
-- Created `ops/kind.yaml` → moved to `infra/kind.yaml`
+- Created `ops/k3d.yaml` → moved to `infra/k3d.yaml`
 - apiVersion: `kind.x-k8s.io/v1alpha4` (not `v1alpha2`)
 - Port mappings for all 6 services + tools (pgAdmin, Redpanda Console)
 - Cluster was recreated once due to accidental node kill + broken CoreDNS
@@ -59,7 +59,7 @@ notebooks/                  ← ML work
 
 | Issue | Fix |
 |---|---|
-| `apiVersion` in kind config | Changed from `v1alpha2` to `kind.x-k8s.io/v1alpha4` |
+| `apiVersion` in k3d config | Changed from `v1alpha2` to `kind.x-k8s.io/v1alpha4` |
 | SeaweedFS `mini` not found | K8s `command` overrides both ENTRYPOINT and CMD. Fixed by using `/entrypoint.sh mini ...` as command |
 | Custom image not found | `imagePullPolicy: IfNotPresent` — tells K8s to use local containerd copy instead of pulling from registry |
 | MLflow `psycopg` missing | Image built with `psycopg2-binary`. MLflow URI must use `postgresql+psycopg2://` scheme |
@@ -69,7 +69,7 @@ notebooks/                  ← ML work
 ### MLflow image
 - Custom image `risk-mlflow:latest` built from `infra/k8s/mlflow/Dockerfile`
 - Contains: Python 3.13-slim + mlflow 2.19+ + psycopg2-binary + boto3
-- Loaded into kind's containerd via `kind load docker-image`
+- Loaded into k3d's containerd via `k3d load docker-image`
 - Accessed by manifest via `imagePullPolicy: IfNotPresent`
 
 ---
@@ -77,14 +77,14 @@ notebooks/                  ← ML work
 ## 3. How to rebuild from scratch
 
 ```bash
-kind delete cluster --name risk-cluster                           # tear down
-bash ops/k8s/kind-up.sh                                           # create + deploy
+`k3d cluster delete --name risk-cluster                           # tear down
+bash ops/k8s/k3d-up.sh                                           # create + deploy
 ```
 
 For custom image rebuild:
 ```bash
 docker build -t risk-mlflow:latest -f infra/k8s/mlflow/Dockerfile .
-kind load docker-image risk-mlflow:latest --name risk-cluster
+`k3d image import risk-mlflow:latest --name risk-cluster
 ```
 
 ---

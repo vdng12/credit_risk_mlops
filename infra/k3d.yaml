@@ -1,0 +1,21 @@
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+metadata:
+  name: risk-cluster
+servers: 1
+portMappings:
+  # Data layer
+  - 5432:5432    # postgres-source
+  - 5433:5433    # postgres-platform
+  - 8333:8333    # seaweedfs S3
+  - 8888:8888    # seaweedfs filer UI
+  - 9333:9333    # seaweedfs master UI
+  - 9092:9092    # redpanda
+  # Catalog layer
+  - 8181:8181    # polaris REST
+  - 8182:8182    # polaris mgmt
+  # ML platform
+  - 5000:5000    # mlflow UI
+  # Tools
+  - 5050:5050    # pgAdmin
+  - 8080:8080    # redpanda console
