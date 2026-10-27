@@ -13,6 +13,7 @@ comparing AUC tells us whether the synthetic data actually carries the
 latent structure a model can exploit.
 
 Usage:
+    uv sync --extra eval
     uv run python scripts/eval_synthetic.py \
         --data /home/mii/.cache/kagglehub/competitions/home-credit-default-risk \
         --n-customers 8000 --months 24

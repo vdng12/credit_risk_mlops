@@ -16,6 +16,9 @@ __marimo__/
 # Environment overrides
 .env
 
+# Agent chat logs
+*.jsonl
+
 # Generated data
 output/
 */output/

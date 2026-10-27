@@ -16,6 +16,8 @@ sinks = [
     "psycopg2-binary>=2.9",
     "boto3>=1.36",
     "kafka-python>=2.0",
+    "pandas>=2.0",
+    "pyarrow>=14",
 ]
 
 [build-system]

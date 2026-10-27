@@ -10,15 +10,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = [
-    "pytest>=8.0",
-    "simulator",
-    "numpy>=2.0",
-    "polars>=1.0",
-    "scipy>=1.14",
-    "scikit-learn>=1.6",
+dev = ["pytest>=8.0"]
+eval = [
     "lightgbm>=4.6",
     "kagglehub>=0.3",
+    "scikit-learn>=1.6",
+    "numpy>=2.0",
+    "polars>=1.0",
 ]
 
 [tool.uv.sources]
