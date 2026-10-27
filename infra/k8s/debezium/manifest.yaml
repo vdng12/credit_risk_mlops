@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: debezium
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: debezium
+  template:
+    metadata:
+      labels:
+        app: debezium
+    spec:
+      containers:
+      - name: debezium
+        image: debezium/connect:2.6
+        env:
+        - name: BOOTSTRAP_SERVERS
+          value: redpanda:9092
+        - name: CONFIG_STORAGE_TOPIC
+          value: debezium-config
+        - name: OFFSET_STORAGE_TOPIC
+          value: debezium-offsets
+        - name: STATUS_STORAGE_TOPIC
+          value: debezium-status
+        - name: CONNECT_KEY
+          value: connect-key
+        - name: CONNECT_SECRET
+          value: connect-secret
+        ports:
+        - containerPort: 8083
+        - containerPort: 9092
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: debezium
+spec:
+  selector:
+    app: debezium
+  ports:
+  - name: api
+    port: 8083
+    targetPort: 8083

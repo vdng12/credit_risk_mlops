@@ -4,7 +4,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../../infra/k8s"
 
-for svc in postgres-source postgres-platform seaweedfs redpanda polaris mlflow; do
+for svc in postgres-source postgres-platform seaweedfs redpanda polaris mlflow debezium; do
   manifest="$svc/manifest.yaml"
   if [[ -f "$manifest" ]]; then
     echo "==> $svc"

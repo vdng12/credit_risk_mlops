@@ -47,10 +47,26 @@ per-client factor vector f ∈ R⁷   (drawn once, stable for life)
 
 ### Output paths
 
-The simulator splits output into two lanes:
+The simulator splits output into two lanes — this is the real DE ingest wiring:
 
-- **HOT (stream)**: loan applications (pre-decision), card authorizations → Redpanda/Kafka topics
-- **COLD (batch)**: clients, decisions, master, POS/card balances, bureau, payments → Parquet files, Postgres, or S3
+```
+simulator (t-copula) ──► MonthBatch
+                            │
+                            ├──► HOT (stream)
+                            │    ├── loan_applications     → Redpanda topic: loan_applications
+                            │    └── card_authorizations   → Redpanda topic: card_authorizations
+                            │
+                            └──► COLD (batch, nightly dump)
+                                 ├── clients               → SeaweedFS S3 bucket (parquet)
+                                 ├── application_decisions → SeaweedFS S3 + Postgres lending_db
+                                 ├── application_master    → Postgres lending_db (gold layer)
+                                 ├── pos_balances          → SeaweedFS S3 (parquet)
+                                 ├── card_balances         → SeaweedFS S3 (parquet)
+                                 ├── bureau                → SeaweedFS S3 (parquet)
+                                 └── payments              → Postgres lending_db (relational)
+```
+
+The `output/` directory was used only for workshop validation; it is NOT the production path.
 
 ### Usage
 
@@ -185,4 +201,5 @@ kind load docker-image risk-mlflow:latest --name risk-cluster
 - Two Postgres roles:
   - `postgres-source` (host :5432) — OLTP source system
   - `postgres-platform` (host :5433) — MLflow / Feast / metastore
-- Data flow: simulator (t-copula) → parquet files → downstream pipeline (Redpanda/SeaweedFS/Postgres)
+- Data flow: simulator (t-copula) → MonthBatch → HOT (Redpanda topics) + COLD (SeaweedFS parquet + Postgres tables)
+  - `output/` is for workshop validation only, not the production pipeline
