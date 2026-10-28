@@ -91,7 +91,7 @@ uv run simulator --n-customers 100000 --months 6    # console script
 uv run python -m simulator --n-customers 100000 --months 6   # module form
 
 # Test
-uv run pytest tests/test_statistics.py -q
+uv run pytest tests/simulator/test_statistics.py -q
 ```
 
 ### Statistical method (docs/statistics.md)
@@ -197,7 +197,7 @@ k3d image import risk-mlflow:latest --name risk-cluster
 |     +- sinks.py            # Parquet/S3/Postgres sinks
 |     `- ...
 +- tests/
-|  `- test_statistics.py      # Regression tests for simulator
+|  `- simulator/test_statistics.py   # Regression tests for simulator
 +- scripts/
 |  `- eval_synthetic.py       # LightGBM eval on synthetic vs real
 +- notebooks/
