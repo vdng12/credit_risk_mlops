@@ -314,6 +314,31 @@ batch lane, dimension bootstrap.
 
 ### Other deferred items
 
+- **Problem interface split (documented refactor, AFTER Phase 5)**: current
+  problems are partial - schema evolution has its own class, but exact
+  duplicate / missing / outliers / late are private methods on the
+  ProblemInjector monolith, and skew is a knob inside generate_clients.
+  Target shape:
+
+  ```
+  class Problem(Protocol):
+      name: str
+      def applies_to(self, entity_type: str) -> bool   # scope contract
+      def apply(self, df, entity_type, month) -> (frame, stats)
+  ```
+
+  - post-gen problems: ExactDuplicate, SchemaEvolution, MissingValues,
+    Outliers, LateArrival, PayloadHash(compute-at-report) - each owns its
+    scope in `applies_to` and returns (dirty frame, stats dict) so the DQ
+    report's injected-vs-observed has a natural hook
+  - ProblemInjector becomes an ordered dispatcher (clean -> evolution ->
+    duplicate -> legacy noise), collecting the stats
+  - generation-time problems (skew, high-cardinality) do NOT fit the frame
+    shape: a second shape (GenerationProblem) is consulted by the entity
+    generators instead
+  - streaming problems from Phase 5 slot in as more FrameProblem
+    implementations
+
 - Spark/Flink jobs with baseline->optimized documentation (Spark/Flink UI)
 - Dagster orchestration: backfill job (one-shot), nightly job (hot-day emit +
   cold-day close), monthly job (bureau/balances/ledger close)
