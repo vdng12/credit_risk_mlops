@@ -128,6 +128,11 @@ optimization, feature store (deferred - see Section 9).
 - **Cadence is orthogonal**: payments/decisions are nightly files *and* streamed;
   balances/bureau are monthly snapshots consumed by batch only. See
   `docs/characteristics.md`.
+- **Object-store rule (canonical S3 set)**: S3 = {clients, application_master,
+  application_decisions, payments, pos_balances, card_balances, bureau} - every
+  business artifact. Pure-stream-only = {loan_applications, card_authorizations}
+  (CDC + write-through archive, never S3). Payments/decisions/clients are
+  dual-lane (file on S3 + CDC stream).
 
 ---
 

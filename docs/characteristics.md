@@ -20,6 +20,13 @@ SeaweedFS S3 (plus local write-through archive). Every entity is written per
 month; payments and decisions additionally appear in the streaming lane as
 nightly files. Target volume: **>= 100GB across all tables combined**.
 
+**Object-store rule**: S3 holds every BUSINESS ARTIFACT (decision/payment
+files, dims, snapshots, gold). The only entities that never go to S3 are the
+pure real-time event streams - `loan_applications` and `card_authorizations`
+(they stream through CDC and live in the parquet write-through archive
+only). Payments / decisions / clients are dual-lane: a stored file on S3
+AND a CDC stream.
+
 | Table | Grain | Key Columns | Cadence |
 |---|---|---|---|
 | clients | one row per client per monthly snapshot | client_id, snapshot_date, age_years, income_total, income_type, occupation_type, region_rating, region_population_relative, credit_score, ext_source_1/2/3, is_cardholder, is_loanholder | monthly |
@@ -27,7 +34,8 @@ nightly files. Target volume: **>= 100GB across all tables combined**.
 | pos_balances | one row per active loan per month | pos_balance_id, client_id, loan_id, snapshot_date, months_balance, cnt_instalment, cnt_instalment_future, sk_dpd, sk_dpd_def | monthly |
 | card_balances | one row per card per month | card_balance_id, card_id, client_id, snapshot_date, amt_balance, amt_credit_limit_actual, amt_drawings_current, amt_payment_current, cnt_drawings_current, sk_dpd | monthly |
 | bureau | one row per bureau account per month (external vendor drop) | bureau_id, client_id, snapshot_date, credit_type, credit_amount, credit_start_date, days_credit, amt_credit_sum, amt_credit_sum_overdue, amt_credit_max_overdue, status | monthly (21-day lag) |
-| payments | one row per instalment payment | payment_id, loan_id, client_id, application_id, payment_date, amount, principal_portion, interest_portion, days_late, payment_method, num_payment | nightly file (02:00 UTC) |
+| application_decisions | one row per application outcome (dual-lane with the streaming table) | application_id, status (approved/declined), decision_timestamp, decision_by | nightly file |
+| payments | one row per instalment payment (dual-lane with the streaming table) | payment_id, loan_id, client_id, application_id, payment_date, amount, principal_portion, interest_portion, days_late, payment_method, num_payment | nightly file (02:00 UTC) |
 
 ## Streaming Data
 
