@@ -103,28 +103,17 @@ class MonthBatch:
         sink: SinkManager,
         run_id: str = "incremental",
     ) -> list[str]:
-        paths = []
+        """Route the month to both lanes (routing lives in simulator.paths).
+
+        - offline (batch): every entity -> write-through parquet + S3 cold facts
+        - online (stream): OLTP entities -> postgres, the Debezium CDC source
+
+        Sink failures are loud - nothing is silently swallowed.
+        """
         month_str = self.month.strftime("%Y-%m")
-
-        # design routing (AGENTS.md, Data generator section): every entity lands in
-        # the local file sink as write-through archive; object-store entities
-        # go to S3; the OLTP + gold entities go to Postgres lending_db (the
-        # Debezium CDC connector turns the OLTP tables into the Kafka stream).
-        # Sink failures are loud - nothing is silently swallowed.
-        s3_entities = {"clients", "application_decisions",
-                       "pos_balances", "card_balances", "bureau"}
-        pg_entities = {"clients", "loan_applications", "card_authorizations",
-                       "application_decisions", "application_master", "payments"}
-
-        for name, df in self.all_entities().items():
-            if df is None or df.height == 0:
-                continue
-            paths.append(sink.to_parquet(df, name, month_str, run_id))
-            if name in s3_entities and sink.s3_enabled:
-                paths.append(sink.to_s3(df, name, month_str, run_id))
-            if name in pg_entities and sink.postgres_enabled:
-                sink.to_postgres(df, table_name=name)
-                paths.append(f"postgres:{name}")
+        paths: list[str] = []
+        paths += sink.offline.write(self.all_entities(), month_str, run_id)
+        paths += sink.online.write(self.all_entities(), month_str, run_id)
         return paths
 
 
