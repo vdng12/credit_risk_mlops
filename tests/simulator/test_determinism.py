@@ -95,6 +95,25 @@ def test_problems_layer_is_per_month_deterministic():
     assert a.apply(clean, "client", m).equals(b.apply(clean, "client", m))
 
 
+def test_duplicates_only_target_event_stream_entities():
+    """Exact duplicates are scoped to the event-stream entities with a
+    realistic failure mode (payment file re-delivery, submission retry);
+    other entities never grow rows from duplication."""
+    cfg = SimConfig(n_customers=10, start_date=date(2020, 1, 1), seed=42)
+    cfg.problems.duplicate_prob = 0.0       # legacy generic knob off
+    cfg.problems.payment_duplicate_rate = 0.5
+    cfg.problems.application_duplicate_rate = 0.5
+    inj = ProblemInjector(cfg, seed=7)
+    m = date(2020, 1, 1)
+    pay = pl.DataFrame({"payment_id": range(10), "amount": [1.0] * 10})
+    app = pl.DataFrame({"application_id": range(10), "loan_amount": [100.0] * 10})
+    cli = pl.DataFrame({"client_id": range(10), "income_total": [1.0] * 10})
+    assert inj.apply(pay, "payment", m).height == 15
+    assert inj.apply(app, "application", m).height == 15
+    # clients never get duplicates (no rows added), only possible missing
+    assert inj.apply(cli, "client", m).height == 10
+
+
 def test_month_rng_is_stable_and_sensitive():
     m = date(2020, 3, 1)
     # determinism: same inputs -> identical first draw

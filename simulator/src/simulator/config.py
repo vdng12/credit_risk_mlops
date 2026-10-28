@@ -131,7 +131,15 @@ class ProblemConfig:
     card_balance_missing_rate: float = 0.008
     bureau_missing_rate: float = 0.015
     payment_missing_rate: float = 0.003
+    # Exact duplicates are SCOPED to the event-stream entities with realistic
+    # failure modes (see problems.py contract):
+    #   payment_duplicate_rate      - payment file re-delivered (~2%)
+    #   application_duplicate_rate  - submission retry bug (~0.5%)
+    # ``duplicate_prob`` is the deprecated generic knob (applied to every
+    # entity); it is superseded by these per-entity rates.
     duplicate_prob: float = 0.0005
+    payment_duplicate_rate: float = 0.02
+    application_duplicate_rate: float = 0.005
     schema_drift_rate: float = 0.1
     late_arrival_max_days: int = 5
     late_arrival_prob: float = 0.02
