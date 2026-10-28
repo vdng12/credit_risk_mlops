@@ -23,15 +23,19 @@ Single workspace lock at the repo root. Produces synthetic lending data across
 
 ```ascii
 t-copula (7 latent factors, N(0,1) margins)
-        │
-        ▼
-per-client factor vector f ∈ R⁷   (drawn once, stable for life)
-        ├── client / application features      f₀…f₅  → marginals
-        ├── child-table links                  f       → binned / GLM curves
-        ├── bureau STATUS                      Markov chain, matrix by f₆ bucket
-        └── loan default                       f₆ → PD curve → per-loan hazard
-                                                       → DPD path → windowed label
+        |
+        v
+per-client factor vector f in R^7   (drawn once, stable for life)
+        |-- client / application features      f_0..f_5 -> marginals
+        |-- child-table links                  f         -> binned / GLM curves
+        |-- bureau STATUS                      Markov chain, matrix by f_6 bucket
+        `-- loan default                       f_6 -> PD curve -> per-loan hazard
+                                                        -> DPD path -> windowed label
 ```
+
+Each client draws the latent vector $\mathbf{f} \in \mathbb{R}^7$ once and
+keeps it for life (subscripts $f_0,\dots,f_5$ = application-feature factors;
+$f_6$ = default propensity).
 
 ### Latent factors
 
@@ -94,16 +98,16 @@ uv run pytest tests/test_statistics.py -q
 
 Full documentation at `docs/statistics.md`. Key design points:
 
-- **t-copula** separates marginals from dependence; tail dependence controlled by ν (ν small = stronger joint extremes)
-- **Copula parameters** (Σ, ν) calibrated from Home Credit via Kendall's τ inversion + profile likelihood
+- **t-copula** separates marginals from dependence; tail dependence controlled by $\nu$ ($\nu$ small = stronger joint extremes)
+- **Copula parameters** $(\Sigma, \nu)$ calibrated from Home Credit via Kendall's $\tau$ inversion + profile likelihood
 - **Default model**: exact hazard inversion `RunHazard` with per-loan i.i.d. monthly delinquency, matched to HC's 8.07% base rate and AUC 0.745
-- **Default-rate knob**: logit shift solved by `brentq` so approval-weighted mean matches target — preserves ranking, deterministic
-- **Label derivation**: `default = 1` if 3 consecutive delinquent months within first 12 instalments; training uses only `final` window rows
+- **Default-rate knob**: logit shift solved by `brentq` so approval-weighted mean matches target - preserves ranking, deterministic
+- **Label derivation**: $\mathrm{default} = 1$ if 3 consecutive delinquent months within first 12 instalments; training uses only `final` window rows
 
 ### Calibration status
 
 Current shipped values are **provisional** (need re-calibration on real Home Credit data).
-The old fit hit ν = 30 (search bound, meaning Gaussian preferred). Two factor signs
+The old fit hit $\nu = 30$ (search bound, meaning Gaussian preferred). Two factor signs
 (creditworthiness, stability) were flipped and corrected in `CopulaConfig.corr_matrix`.
 Signs of factors 1,2,3,5 are unverified until anchored calibration is re-run.
 
@@ -164,47 +168,47 @@ k3d image import risk-mlflow:latest --name risk-cluster
 
 ```
 .
-├── pyproject.toml              # Workspace root
-├── uv.lock
-├── configs/                    # Platform-agnostic configs
-│   └── seaweedfs/s3.json       # S3 identities (legacy)
-├── infra/                      # Deployment definitions
-│   ├── k3d.yaml               # Cluster config
-│   ├── postgres/init/          # Source OLTP schema (embedded in postgres-source manifest)
-│   ├── compose/                # Old docker-compose (reference)
-│   └── k8s/<service>/         # K8s manifests per service
-│       └── manifest.yaml
-├── ops/                        # Operational scripts
-│   ├── k8s/                    # apply-all.sh, k3d-up.sh
-│   ├── debezium/               # register-connector.sh (CDC connector registration)
-│   └── postgres/               # run-source-postgres.sh
-├── simulator/                  # Workspace member (uv; src/simulator layout)
-│   ├── pyproject.toml          # Deps (numpy, polars, scipy, sklearn); [project.scripts] simulator
-│   ├── Dockerfile              # uv multi-stage image build
-│   └── src/simulator/          # Package source
-│       ├── __init__.py
-│       ├── core.py             # Simulator (stateful iterator)
-│       ├── config.py           # SimConfig, CopulaConfig, SinkConfig
-│       ├── copula.py           # CopulaEngine (t-copula sampling)
-│       ├── calibrate.py        # Fit copula from real data
-│       ├── entities.py         # Per-entity generators
-│       ├── state.py            # AccountLedger, RunHazard
-│       ├── label.py            # Default label derivation
-│       ├── sinks.py            # Parquet/S3/Postgres sinks
-│       └── ...
-├── tests/
-│   └── test_statistics.py      # Regression tests for simulator
-├── scripts/
-│   └── eval_synthetic.py       # LightGBM eval on synthetic vs real
-├── notebooks/
-│   ├── explore.py              # marimo EDA
-│   └── fit.py                  # marimo LightGBM baseline
-└── docs/
-    ├── statistics.md           # Full statistical method doc
-    ├── infra_ops_20261025.md   # Infra deployment plan
-    ├── deployment_report_20261026.md  # Cluster state report
-    ├── data_generator_impl_note_20261026.md  # Generator impl notes
-    └── fixlog_20261028.md      # Session log: restructure, sinks, CDC-only, k3d recovery
++- pyproject.toml              # Workspace root
++- uv.lock
++- configs/                    # Platform-agnostic configs
+|  `- seaweedfs/s3.json       # S3 identities (legacy)
++- infra/                      # Deployment definitions
+|  +- k3d.yaml               # Cluster config
+|  +- postgres/init/          # Source OLTP schema (embedded in postgres-source manifest)
+|  +- compose/                # Old docker-compose (reference)
+|  `- k8s/<service>/         # K8s manifests per service
+|     `- manifest.yaml
++- ops/                        # Operational scripts
+|  +- k8s/                    # apply-all.sh, k3d-up.sh
+|  +- debezium/               # register-connector.sh (CDC connector registration)
+|  `- postgres/               # run-source-postgres.sh
++- simulator/                  # Workspace member (uv; src/simulator layout)
+|  +- pyproject.toml          # Deps (numpy, polars, scipy, sklearn); [project.scripts] simulator
+|  +- Dockerfile              # uv multi-stage image build
+|  `- src/simulator/          # Package source
+|     +- __init__.py
+|     +- core.py             # Simulator (stateful iterator)
+|     +- config.py           # SimConfig, CopulaConfig, SinkConfig
+|     +- copula.py           # CopulaEngine (t-copula sampling)
+|     +- calibrate.py        # Fit copula from real data
+|     +- entities.py         # Per-entity generators
+|     +- state.py            # AccountLedger, RunHazard
+|     +- label.py            # Default label derivation
+|     +- sinks.py            # Parquet/S3/Postgres sinks
+|     `- ...
++- tests/
+|  `- test_statistics.py      # Regression tests for simulator
++- scripts/
+|  `- eval_synthetic.py       # LightGBM eval on synthetic vs real
++- notebooks/
+|  +- explore.py              # marimo EDA
+|  `- fit.py                  # marimo LightGBM baseline
++- docs/
+   +- statistics.md           # Full statistical method doc
+   +- infra_ops_20261025.md   # Infra deployment plan
+   +- deployment_report_20261026.md  # Cluster state report
+   +- data_generator_impl_note_20261026.md  # Generator impl notes
+   `- fixlog_20261028.md      # Session log: restructure, sinks, CDC-only, k3d recovery
 ```
 
 ## Conventions
