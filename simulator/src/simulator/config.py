@@ -131,12 +131,82 @@ class ProblemConfig:
     card_balance_missing_rate: float = 0.008
     bureau_missing_rate: float = 0.015
     payment_missing_rate: float = 0.003
+    # Exact duplicates are SCOPED to the event-stream entities with realistic
+    # failure modes (see problems.py contract):
+    #   payment_duplicate_rate      - payment file re-delivered (~2%)
+    #   application_duplicate_rate  - submission retry bug (~0.5%)
+    # ``duplicate_prob`` is the deprecated generic knob (applied to every
+    # entity); it is superseded by these per-entity rates.
     duplicate_prob: float = 0.0005
+    payment_duplicate_rate: float = 0.02
+    application_duplicate_rate: float = 0.005
     schema_drift_rate: float = 0.1
     late_arrival_max_days: int = 5
     late_arrival_prob: float = 0.02
     outlier_rate: float = 0.001
     column_swap_prob: float = 0.0002
+
+    # Schema evolution (bureau ONLY - external vendor). Off by default:
+    # schema_version is only stamped, and v1 months keep their original
+    # shape, when this is enabled.
+    schema_evolution_enabled: bool = False
+    schema_evolution_change_date: Optional[date] = None       # v1 -> v2
+    schema_evolution_breaking_change_date: Optional[date] = None  # v2 -> v3
+    schema_evolution_breaking_version: int = 3
+    # Generation-time skew (off by default): share of clients forced into
+    # the top region (portfolio concentration). 0 disables the bias.
+    region_skew_top_ratio: float = 0.0
+
+
+@dataclass
+class StreamBurstConfig:
+    """Burst traffic: volume spikes every N ticks (0 disables)."""
+
+    every_n_ticks: int = 0
+    multiplier: int = 3
+
+
+@dataclass
+class StreamReplayConfig:
+    """Duplicate replay (at-least-once re-delivery) of day bundles."""
+
+    rate: float = 0.0
+    history_size: int = 1000
+
+
+@dataclass
+class StreamLateConfig:
+    """Late arrival: fraction of rows with event timestamps in the past."""
+
+    rate: float = 0.0
+    delay_minutes_min: int = 5
+    delay_minutes_max: int = 45
+
+
+@dataclass
+class StreamProblemsConfig:
+    burst: StreamBurstConfig = field(default_factory=StreamBurstConfig)
+    duplicate_replay: StreamReplayConfig = field(
+        default_factory=StreamReplayConfig)
+    late_arrival: StreamLateConfig = field(default_factory=StreamLateConfig)
+
+
+@dataclass
+class StreamEmitConfig:
+    """Online emitter pacing knobs."""
+
+    grain: str = "day"        # delivery grain: 'day' (per-tick later)
+    tick_seconds: float = 0.0  # wall-clock pacing; 0 = fast-forward
+
+
+@dataclass
+class StreamingConfig:
+    """Online (stream) lane: per-day re-delivery of hot entities."""
+
+    enabled: bool = False
+    emit: StreamEmitConfig = field(default_factory=StreamEmitConfig)
+    problems: StreamProblemsConfig = field(
+        default_factory=StreamProblemsConfig)
 
 
 @dataclass
@@ -176,8 +246,10 @@ class SimConfig:
     entities: EntityConfig = field(default_factory=EntityConfig)
     time: TimeConfig = field(default_factory=TimeConfig)
     problems: ProblemConfig = field(default_factory=ProblemConfig)
+    streaming: StreamingConfig = field(default_factory=StreamingConfig)
     sinks: SinkConfig = field(default_factory=SinkConfig)
     seed: int = 42
+    run_id: str = "default"
 
     # Flat-kwarg routing for common overrides
     _FLAT_TO_NESTED = {
@@ -198,8 +270,10 @@ class SimConfig:
         self.entities = EntityConfig()
         self.time = TimeConfig()
         self.problems = ProblemConfig()
+        self.streaming = StreamingConfig()
         self.sinks = SinkConfig()
         self.seed = 42
+        self.run_id = "default"
 
         for flat_key, (nested_obj, nested_key) in self._FLAT_TO_NESTED.items():
             if flat_key in kwargs:

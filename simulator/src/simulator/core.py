@@ -22,6 +22,7 @@ import polars as pl
 
 from simulator.clock import SimClock
 from simulator.copula import CopulaEngine
+from simulator.evolution import SchemaEvolutionProblem
 from simulator.entities import (
     generate_card_auths,
     generate_clients,
@@ -30,6 +31,7 @@ from simulator.entities import (
 from simulator.params import Params
 from simulator.problems import ProblemInjector
 from simulator.quality import QualityValidator
+from simulator.randstreams import month_rng
 from simulator.sinks import SinkManager
 from simulator.state import AccountLedger, draw_from_model
 
@@ -102,28 +104,17 @@ class MonthBatch:
         sink: SinkManager,
         run_id: str = "incremental",
     ) -> list[str]:
-        paths = []
+        """Route the month to both lanes (routing lives in simulator.paths).
+
+        - offline (batch): every entity -> write-through parquet + S3 cold facts
+        - online (stream): OLTP entities -> postgres, the Debezium CDC source
+
+        Sink failures are loud - nothing is silently swallowed.
+        """
         month_str = self.month.strftime("%Y-%m")
-
-        # design routing (AGENTS.md, Data generator section): every entity lands in
-        # the local file sink as write-through archive; object-store entities
-        # go to S3; the OLTP + gold entities go to Postgres lending_db (the
-        # Debezium CDC connector turns the OLTP tables into the Kafka stream).
-        # Sink failures are loud - nothing is silently swallowed.
-        s3_entities = {"clients", "application_decisions",
-                       "pos_balances", "card_balances", "bureau"}
-        pg_entities = {"clients", "loan_applications", "card_authorizations",
-                       "application_decisions", "application_master", "payments"}
-
-        for name, df in self.all_entities().items():
-            if df is None or df.height == 0:
-                continue
-            paths.append(sink.to_parquet(df, name, month_str, run_id))
-            if name in s3_entities and sink.s3_enabled:
-                paths.append(sink.to_s3(df, name, month_str, run_id))
-            if name in pg_entities and sink.postgres_enabled:
-                sink.to_postgres(df, table_name=name)
-                paths.append(f"postgres:{name}")
+        paths: list[str] = []
+        paths += sink.offline.write(self.all_entities(), month_str, run_id)
+        paths += sink.online.write(self.all_entities(), month_str, run_id)
         return paths
 
 
@@ -143,6 +134,13 @@ class Simulator:
             bureau_lag_days=config.time.bureau_drop_lag_days,
         )
         self.injector = ProblemInjector(config, seed=config.seed + 1)
+        self.evolution = SchemaEvolutionProblem(
+            change_date=config.problems.schema_evolution_change_date,
+            breaking_change_date=(
+                config.problems.schema_evolution_breaking_change_date),
+            breaking_schema_version=(
+                config.problems.schema_evolution_breaking_version),
+        )
         self.validator = QualityValidator(config)
         self.sink = SinkManager(config)
         self._rng = np.random.default_rng(config.seed + 2)
@@ -150,6 +148,7 @@ class Simulator:
         self.params = Params()
         self.ledger = AccountLedger(
             self.params, self._rng,
+            root_seed=self.seed,
             target_default_rate=self.cfg.entities.target_default_rate,
             performance_window=self.cfg.entities.performance_window_months,
             trigger_months=self.cfg.entities.default_trigger_months)
@@ -301,6 +300,7 @@ class Simulator:
                 factors=F,
                 is_cardholder=self._is_cardholder,
                 is_loanholder=self._is_loanholder,
+                region_skew_top_ratio=self.cfg.problems.region_skew_top_ratio,
             )
         clients = self._client_static.with_columns([
             pl.lit(month).alias("snapshot_date"),
@@ -313,11 +313,13 @@ class Simulator:
             self._originate_initial_accounts(clients)
             self._ledger_initialized = True
 
-        # Stream: loan applications (pre-decision view + decision outcome)
+        # Stream: loan applications (pre-decision view + decision outcome).
+        # Per-month stream: the month's applications are a pure function of
+        # (seed, "applications", month) and replay byte-identically.
         applications, decisions, approvals = generate_loan_applications(
             self.engine, clients, F, month, self.params,
             monthly_app_rate=self.cfg.entities.monthly_app_rate,
-            rng=self._rng,
+            rng=month_rng(self.seed, "applications", month),
         )
         self.ledger.originate_loans(approvals)
         # Unified master table: submitted + decision joined on application_id
@@ -347,7 +349,7 @@ class Simulator:
                 auths_per_card_per_day=self.cfg.entities.auths_per_card_per_day,
                 decline_rate=self.cfg.entities.auth_decline_rate,
                 merchant_categories=self.cfg.entities.merchant_categories,
-                rng=self._rng,
+                rng=month_rng(self.seed, "card_auths", month),
                 card_ids=[c.card_id for c in self.ledger.cards],
                 client_factors=F,
             )
@@ -368,14 +370,36 @@ class Simulator:
         bureau = self.ledger.emit_bureau(month)
         payments = pl.DataFrame(payment_rows)
 
-        # Inject data problems
-        clients = self.injector.apply(clients, "client")
-        applications = self.injector.apply(applications, "application")
-        card_auths = self.injector.apply(card_auths, "card_auth")
-        pos_balances = self.injector.apply(pos_balances, "pos_balance")
-        card_balances = self.injector.apply(card_balances, "card_balance")
-        bureau = self.injector.apply(bureau, "bureau")
-        payments = self.injector.apply(payments, "payment")
+        # Schema evolution (bureau ONLY): stamp schema_version and mutate
+        # the vendor file shape before the generic problem injector, so
+        # the corruption layer sees the evolved frames. Off when disabled.
+        if self.cfg.problems.schema_evolution_enabled:
+            bureau, _ = self.evolution.apply(bureau, month)
+
+        # Inject data problems - clean-then-inject, one entity, one month.
+        #
+        # The entity generators above produced CLEAN, relationally
+        # consistent frames; contamination is a separate stage that never
+        # touches generation logic (see problems.py for the problem ->
+        # entity scope contract - e.g. schema evolution is bureau-only,
+        # exact duplicates are payments/applications only).
+        #
+        # application_decisions / application_master are deliberately NOT
+        # injected: decisions is a derived outcome frame and master is the
+        # join of applications + decisions, so the stream entities are the
+        # single injection point - corrupting the derived views would
+        # double-corrupt or break the join.
+        #
+        # Each apply() derives its corruption stream from
+        # (root seed, entity, month) so the same clean month always yields
+        # the same dirty month (Phase 0 indexed determinism).
+        clients = self.injector.apply(clients, "client", month)
+        applications = self.injector.apply(applications, "application", month)
+        card_auths = self.injector.apply(card_auths, "card_auth", month)
+        pos_balances = self.injector.apply(pos_balances, "pos_balance", month)
+        card_balances = self.injector.apply(card_balances, "card_balance", month)
+        bureau = self.injector.apply(bureau, "bureau", month)
+        payments = self.injector.apply(payments, "payment", month)
 
         # Validate (per-entity + referential integrity)
         issues = self.validator.validate_batch(
@@ -429,13 +453,22 @@ class Simulator:
         return batches
 
     def play_forward(self, months: int) -> Iterator[MonthBatch]:
-        start = self._current_month or self.cfg.time.start_date
+        """Generate months forward (continuation semantics).
+
+        - fresh run (nothing backfilled): the configured ``start_date``
+          itself is the first month generated - it must not be skipped.
+        - after backfill(until): ``_current_month`` == until, so the next
+          month generated is the month AFTER it (advance then generate).
+        """
+        if self._current_month is None:
+            month = self.cfg.time.start_date.replace(day=1)
+        else:
+            month = self._next_month_date(self._current_month)
         for _ in range(months):
-            month = self._next_month_date(start)
             batch = self._generate_month(month)
             self._current_month = month
-            start = month
             yield batch
+            month = self._next_month_date(month)
 
     def next_month(self) -> MonthBatch:
         return next(self.play_forward(1))

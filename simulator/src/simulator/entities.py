@@ -47,6 +47,7 @@ def generate_clients(
     factors: Optional[np.ndarray] = None,
     is_cardholder: Optional[np.ndarray] = None,
     is_loanholder: Optional[np.ndarray] = None,
+    region_skew_top_ratio: float = 0.0,
 ) -> pl.DataFrame:
     """Generate n client master rows (monthly batch).
 
@@ -54,6 +55,10 @@ def generate_clients(
     factor matrix instead of sampling fresh ones, so a client's latent
     characteristics stay stable across months. Likewise ``is_cardholder``
     and ``is_loanholder`` may be supplied as pre-computed stable flags.
+
+    ``region_skew_top_ratio`` (>0, <1) forces that share of clients into
+    the top region - a portfolio-concentration bias independent of the
+    latent factors (part of the simulated skew problem).
     """
     if client_ids is None:
         client_ids = [f"C{i:08d}" for i in range(n)]
@@ -129,6 +134,9 @@ def generate_clients(
 
     region_rating = np.clip((6 - f_stab * 1.2).astype(np.int32), 1, 5)
     region_pop = np.exp(8 + f_stab * 0.3 + rng.standard_normal(n) * 0.5) * 1e4
+    if 0.0 < region_skew_top_ratio <= 1.0:
+        top = rng.random(n) < region_skew_top_ratio
+        region_rating = np.where(top, 5, region_rating)
 
     days_employed = np.clip(-3000 + f_stab * 1000 + rng.standard_normal(n) * 1500,
                             -14600, 0).astype(np.int32)

@@ -1,14 +1,51 @@
 """Data problem injection for the simulator.
 
-Applies controlled corruptions: missing values, duplicates, outliers,
-schema drift, late arrivals, and column swaps.
+Problem -> entity scope contract
+===============================
+Every data problem is deliberately scoped to a SUBSET of entities, because
+it models a specific real-world failure mode that only makes sense there.
+Applying a problem outside its scope would corrupt data with no realistic
+cause and would break the validator's invariants.
+
+    skew             -> clients (region/income concentration), card_auths
+                        (merchant mix), applications (purpose mix)
+                        [generation-time, Phase 4]
+    schema evolution -> BUREAU ONLY: an external vendor adds/breaks a field
+                        mid-history; other tables have no vendor
+                        [Phase 4]
+    exact duplicate  -> payments (re-delivered payment file, ~2%),
+                        applications (submission retry bug, ~0.5%)
+                        [Phase 4]
+    late arrival     -> card_auths (mobile batching), payments/decisions
+                        (file carrier delay) - STREAMING lane
+                        [Phase 5]
+    duplicate replay -> card_auths, applications (at-least-once re-delivery)
+                        - STREAMING lane [Phase 5]
+    burst traffic    -> card_auths, applications (end-of-month closings)
+                        - STREAMING lane [Phase 5]
+
+Legacy generic noise (missing values, outliers, batch date-shift)
+-----------------------------------------------------------------
+Pre-Phase-4 problems kept for continuity; they are entity-agnostic (wired
+by per-entity rates in config) and are scheduled to be replaced by the
+scoped rubric problems above.
 """
 
 from __future__ import annotations
 
+from datetime import date
+
 import numpy as np
 import polars as pl
 from numpy.random import Generator
+
+from simulator.randstreams import month_rng
+
+
+# Entities that receive exact-duplicate injection (rubric: "another offline
+# problem, e.g. 2% duplicate rate"). Only these two - duplicates on any
+# other table have no realistic cause and would corrupt FK/amount math.
+_DUPLICATE_ENTITIES = frozenset({"payment", "application"})
 
 
 class ProblemInjector:
@@ -16,20 +53,33 @@ class ProblemInjector:
 
     def __init__(self, config, seed: int = 42) -> None:
         self.cfg = config
+        self._root_seed = int(seed)
         self._rng: Generator = np.random.default_rng(seed)
 
-    def apply(self, df: pl.DataFrame, entity_type: str) -> pl.DataFrame:
+    def apply(
+        self, df: pl.DataFrame, entity_type: str, month: date | None = None
+    ) -> pl.DataFrame:
         """Apply all enabled problems to a DataFrame.
 
         entity_type: 'client', 'application', 'card_auth', 'pos_balance',
                      'card_balance', 'bureau', or 'payment'.
+
+        Phase 0: when a month is given, this (entity, month)'s corruption
+        is a pure function of the root seed - re-applying it to the same
+        clean frame reproduces the same dirty frame.
         """
         if not self.cfg.problems.enabled:
             return df
 
+        if month is not None:
+            self._rng = month_rng(
+                self._root_seed, f"problems:{entity_type}", month
+            )
+
         rate = getattr(self.cfg.problems, f"{entity_type}_missing_rate", 0.01)
         df = self._inject_missing(df, rate)
-        df = self._inject_duplicates(df)
+        # duplicates are event-stream entities only (see _DUPLICATE_ENTITIES)
+        df = self._inject_duplicates(df, entity_type)
         df = self._inject_outliers(df)
         df = self._inject_late_arrivals(df)
         return df
@@ -53,10 +103,22 @@ class ProblemInjector:
                 result = result.with_columns(pl.Series(col, vals))
         return result
 
-    def _inject_duplicates(self, df: pl.DataFrame) -> pl.DataFrame:
-        if self.cfg.problems.duplicate_prob <= 0:
+    def _inject_duplicates(self, df: pl.DataFrame, entity_type: str) -> pl.DataFrame:
+        """Exact-duplicate injection - payments + applications only.
+
+        Scoped by _DUPLICATE_ENTITIES; the rate is per-entity
+        (payment_duplicate_rate / application_duplicate_rate) so each table
+        models its own failure mode (re-delivered payment file ~2% vs
+        submission retry bug ~0.5%). Clones are byte-identical, so the
+        validator's FK/amount invariants stay intact.
+        """
+        if entity_type not in _DUPLICATE_ENTITIES:
             return df
-        n_dups = max(1, int(df.height * self.cfg.problems.duplicate_prob))
+        rate = getattr(
+            self.cfg.problems, f"{entity_type}_duplicate_rate", 0.0)
+        if rate <= 0:
+            return df
+        n_dups = max(1, int(df.height * rate))
         idx = self._rng.choice(df.height, size=n_dups, replace=False)
         return pl.concat([df, df[idx]])
 
