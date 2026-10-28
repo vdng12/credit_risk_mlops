@@ -1,4 +1,4 @@
-# Data generator job — runs the `simulator` console script from the
+# Data generator job - runs the `simulator` console script from the
 # risk-simulator image (see simulator/Dockerfile). Produces the daily HOT/COLD
 # lanes the DE pipeline ingests.
 #

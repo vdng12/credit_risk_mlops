@@ -47,27 +47,27 @@ per-client factor vector f ∈ R⁷   (drawn once, stable for life)
 
 ### Output paths
 
-The simulator releases everything COLD-first — no direct Kafka writes. Kafka is
+The simulator releases everything COLD-first - no direct Kafka writes. Kafka is
 streamed downstream by the Debezium CDC connector on postgres-source, which
 re-publishes writes to the OLTP tables (this is the real DE ingest wiring):
 
 ```
-simulator (t-copula) ──► MonthBatch ──► local parquet write-through (outputs/generated/)
-                            │
-                            └──► postgres-source lending_db (OLTP — Debezium CDC → Redpanda)
-                                 ├── clients               → lending_db.clients        → CDC topic lending.public.clients
-                                 ├── loan_applications     → lending_db.loan_applications → CDC topic lending.public.loan_applications
-                                 ├── card_authorizations   → lending_db.card_authorizations → CDC topic lending.public.card_authorizations
-                                 ├── application_decisions → lending_db.application_decisions → CDC topic lending.public.application_decisions
-                                 ├── payments              → lending_db.payments            → CDC topic lending.public.payments
-                                 └── application_master    → lending_db.application_master (gold layer, no CDC)
-
-                            └──► SeaweedFS S3 bucket (parquet snapshots)
-                                 ├── clients               → s3://risk-data/<run>/clients_<yyyy-mm>.parquet
-                                 ├── application_decisions → s3://risk-data/<run>/application_decisions_<yyyy-mm>.parquet
-                                 ├── pos_balances          → s3://risk-data/<run>/pos_balances_<yyyy-mm>.parquet
-                                 ├── card_balances         → s3://risk-data/<run>/card_balances_<yyyy-mm>.parquet
-                                 └── bureau                → s3://risk-data/<run>/bureau_<yyyy-mm>.parquet
+simulator (t-copula) -> MonthBatch -> local parquet write-through (outputs/generated/)
+                         |
+                         +-- postgres-source lending_db (OLTP - Debezium CDC -> Redpanda)
+                         |    clients               -> lending_db.clients        -> CDC topic lending.public.clients
+                         |    loan_applications     -> lending_db.loan_applications -> CDC topic lending.public.loan_applications
+                         |    card_authorizations   -> lending_db.card_authorizations -> CDC topic lending.public.card_authorizations
+                         |    application_decisions -> lending_db.application_decisions -> CDC topic lending.public.application_decisions
+                         |    payments              -> lending_db.payments            -> CDC topic lending.public.payments
+                         |    application_master    -> lending_db.application_master (gold layer, no CDC)
+                         |
+                         +-- SeaweedFS S3 bucket (parquet snapshots)
+                              clients               -> s3://risk-data/<run>/clients_<yyyy-mm>.parquet
+                              application_decisions -> s3://risk-data/<run>/application_decisions_<yyyy-mm>.parquet
+                              pos_balances          -> s3://risk-data/<run>/pos_balances_<yyyy-mm>.parquet
+                              card_balances         -> s3://risk-data/<run>/card_balances_<yyyy-mm>.parquet
+                              bureau                -> s3://risk-data/<run>/bureau_<yyyy-mm>.parquet
 ```
 
 Sinks and endpoints are configured via `SinkConfig` (env `SIM_*` overrides); all
@@ -75,7 +75,7 @@ entities also land in the local file sink as a write-through archive.
 
 The `output/` directory was used only for workshop validation; it is NOT the
 production path. The generator's local write-through archive defaults to
-`outputs/generated/` (gitignored) — the production lanes are the S3/Postgres/
+`outputs/generated/` (gitignored) - the production lanes are the S3/Postgres/
 Kafka sinks below.
 
 ### Usage
@@ -208,5 +208,5 @@ docker build -t risk-mlflow:latest -f infra/k8s/mlflow/Dockerfile .
 - Two Postgres roles:
   - `postgres-source` (host :5432) — OLTP source system
   - `postgres-platform` (host :5433) — MLflow / Feast / metastore
-- Data flow: simulator (t-copula) → MonthBatch → local parquet write-through + Postgres OLTP (lending_db) + SeaweedFS S3; Kafka/Redpanda streams are Debezium CDC re-publications of the Postgres OLTP writes (no direct Kafka writes from the generator)
+- Data flow: simulator (t-copula) -> MonthBatch -> local parquet write-through + Postgres OLTP (lending_db) + SeaweedFS S3; Kafka/Redpanda streams are Debezium CDC re-publications of the Postgres OLTP writes (no direct Kafka writes from the generator)
   - `output/` is for workshop validation only, not the production pipeline

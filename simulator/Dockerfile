@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # -----------------------------------------------------------------------------
-# Data generator image — the `simulator` workspace member (src/simulator layout).
+# Data generator image - the `simulator` workspace member (src/simulator layout).
 #
 # The build context is the WORKSPACE ROOT (requires uv.lock + pyproject.toml):
 #
@@ -22,13 +22,13 @@ ENV UV_COMPILE_BYTECODE=1 \
 
 WORKDIR /app
 
-# Layer 1 — resolve + fetch the *entire* dependency closure from the lockfile.
+# Layer 1 - resolve + fetch the *entire* dependency closure from the lockfile.
 # Only invalidated when uv.lock or a pyproject.toml changes.
 COPY uv.lock pyproject.toml ./
 COPY simulator/pyproject.toml ./simulator/
 RUN uv sync --frozen --no-dev --no-install-workspace
 
-# Layer 2 — install the simulator package itself + its runtime extras.
+# Layer 2 - install the simulator package itself + its runtime extras.
 COPY simulator/src ./simulator/src
 RUN uv sync --frozen --no-dev --package simulator --all-extras
 
