@@ -146,6 +146,17 @@ class ProblemConfig:
     outlier_rate: float = 0.001
     column_swap_prob: float = 0.0002
 
+    # Schema evolution (bureau ONLY - external vendor). Off by default:
+    # schema_version is only stamped, and v1 months keep their original
+    # shape, when this is enabled.
+    schema_evolution_enabled: bool = False
+    schema_evolution_change_date: Optional[date] = None       # v1 -> v2
+    schema_evolution_breaking_change_date: Optional[date] = None  # v2 -> v3
+    schema_evolution_breaking_version: int = 3
+    # Generation-time skew (off by default): share of clients forced into
+    # the top region (portfolio concentration). 0 disables the bias.
+    region_skew_top_ratio: float = 0.0
+
 
 @dataclass
 class SinkConfig:

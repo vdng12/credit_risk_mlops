@@ -22,6 +22,7 @@ import polars as pl
 
 from simulator.clock import SimClock
 from simulator.copula import CopulaEngine
+from simulator.evolution import SchemaEvolutionProblem
 from simulator.entities import (
     generate_card_auths,
     generate_clients,
@@ -133,6 +134,13 @@ class Simulator:
             bureau_lag_days=config.time.bureau_drop_lag_days,
         )
         self.injector = ProblemInjector(config, seed=config.seed + 1)
+        self.evolution = SchemaEvolutionProblem(
+            change_date=config.problems.schema_evolution_change_date,
+            breaking_change_date=(
+                config.problems.schema_evolution_breaking_change_date),
+            breaking_schema_version=(
+                config.problems.schema_evolution_breaking_version),
+        )
         self.validator = QualityValidator(config)
         self.sink = SinkManager(config)
         self._rng = np.random.default_rng(config.seed + 2)
@@ -292,6 +300,7 @@ class Simulator:
                 factors=F,
                 is_cardholder=self._is_cardholder,
                 is_loanholder=self._is_loanholder,
+                region_skew_top_ratio=self.cfg.problems.region_skew_top_ratio,
             )
         clients = self._client_static.with_columns([
             pl.lit(month).alias("snapshot_date"),
@@ -360,6 +369,12 @@ class Simulator:
         card_balances = self.ledger.emit_card_balances(month)
         bureau = self.ledger.emit_bureau(month)
         payments = pl.DataFrame(payment_rows)
+
+        # Schema evolution (bureau ONLY): stamp schema_version and mutate
+        # the vendor file shape before the generic problem injector, so
+        # the corruption layer sees the evolved frames. Off when disabled.
+        if self.cfg.problems.schema_evolution_enabled:
+            bureau, _ = self.evolution.apply(bureau, month)
 
         # Inject data problems - clean-then-inject, one entity, one month.
         #
