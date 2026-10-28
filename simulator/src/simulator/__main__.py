@@ -226,7 +226,7 @@ def cmd_calibrate(ns: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_stream(ns: argparse.Namespace) -> int:
+def cmd_live(ns: argparse.Namespace) -> int:
     """Generate months forward, then re-deliver each month's hot entities
     day by day (SimClock) with the streaming problems attached, writing
     each day's bundle to the online lane (postgres -> CDC)."""
@@ -241,11 +241,11 @@ def cmd_stream(ns: argparse.Namespace) -> int:
     run_id, months = scope["run_id"], scope["months"]
 
     if not cfg.streaming.enabled:
-        print("stream needs streaming.enabled: true in the config",
+        print("live needs streaming.enabled: true in the config",
               file=sys.stderr)
         return 2
     if not cfg.sinks.enable_postgres:
-        print("stream needs the postgres sink enabled (the CDC source)",
+        print("live needs the postgres sink enabled (the CDC source)",
               file=sys.stderr)
         return 2
 
@@ -300,11 +300,12 @@ def main() -> None:
     cal.add_argument("--subsample", type=int, default=None)
     cal.set_defaults(func=cmd_calibrate)
 
-    stream = sub.add_parser("stream", parents=[_common_parser(suppress=True)],
-                            help="re-deliver hot entities day-by-day with "
-                                 "streaming problems (online lane)")
-    stream.add_argument("--tick-seconds", type=float, default=None)
-    stream.set_defaults(func=cmd_stream)
+    live = sub.add_parser("live", parents=[_common_parser(suppress=True)],
+                          help="run the live stage: hot stream day-by-day + "
+                               "nightly batch + monthly close (online + "
+                               "batch lanes)")
+    live.add_argument("--tick-seconds", type=float, default=None)
+    live.set_defaults(func=cmd_live)
 
     ns = parser.parse_args()
     if ns.command is None:
