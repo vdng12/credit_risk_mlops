@@ -16,10 +16,21 @@ import polars as pl
 from simulator.sinks.parquet import LocalParquetSink
 from simulator.sinks.s3 import S3Sink
 
-# Snapshots / facts that batch consumers read from object storage.
+# Object-store cold facts: every BUSINESS ARTIFACT, never the pure
+# real-time event streams. Rule: what is a stored product (decision /
+# payment files, dims, snapshots, gold) vs a transient event row?
+#
+#   S3            = {clients, application_master, application_decisions,
+#                    payments, pos_balances, card_balances, bureau}
+#   pure-stream   = {loan_applications, card_authorizations} (Kafka + the
+#                    parquet write-through archive only)
+#
+# Dual-lane: payments/decision outcomes are nightly FILES on S3 AND stream
+# through CDC (the bank keeps the file and streams the events); clients is
+# a monthly snapshot on S3 plus a dim stream.
 _S3_COLD_FACTS = frozenset({
-    "clients", "application_decisions",
-    "pos_balances", "card_balances", "bureau",
+    "clients", "application_master", "application_decisions",
+    "payments", "pos_balances", "card_balances", "bureau",
 })
 
 

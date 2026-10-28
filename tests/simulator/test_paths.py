@@ -14,11 +14,14 @@ from simulator.sinks.s3 import S3Sink
 
 
 def test_lane_routing_sets_are_explicit():
-    # offline: immutable cold-facts snapshots on object storage
+    # offline: every business ARTIFACT on object storage (object-store rule)
     assert _S3_COLD_FACTS == {
-        "clients", "application_decisions",
-        "pos_balances", "card_balances", "bureau",
+        "clients", "application_master", "application_decisions",
+        "payments", "pos_balances", "card_balances", "bureau",
     }
+    # pure-stream entities never go to S3
+    assert "loan_applications" not in _S3_COLD_FACTS
+    assert "card_authorizations" not in _S3_COLD_FACTS
     # online: OLTP tables on postgres-source (the Debezium CDC source) + gold
     assert _STREAM_OLTP == {
         "clients", "loan_applications", "card_authorizations",
@@ -45,9 +48,10 @@ def test_offline_path_archives_everything_s3_only_cold_facts(tmp_path):
     offline = OfflinePath(parquet, s3, s3_enabled=True)
 
     entities = {
-        "clients": pl.DataFrame({"client_id": [1]}),           # cold fact
-        "bureau": pl.DataFrame({"bureau_id": ["b1"]}),         # cold fact
+        "clients": pl.DataFrame({"client_id": [1]}),           # artifact
+        "bureau": pl.DataFrame({"bureau_id": ["b1"]}),         # artifact
         "application_master": pl.DataFrame({"application_id": ["a1"]}),
+        "payments": pl.DataFrame({"payment_id": ["p1"]}),       # artifact
         "loan_applications": None,                             # empty -> skipped
     }
     paths = offline.write(entities, "2020-01", "run1")
@@ -55,10 +59,11 @@ def test_offline_path_archives_everything_s3_only_cold_facts(tmp_path):
     local = [p for p in paths if not p.startswith("s3://")]
     assert {p.split("/")[-1] for p in local} == {
         "clients_2020-01.parquet", "bureau_2020-01.parquet",
-        "application_master_2020-01.parquet"}
-    # S3 got exactly the cold-facts subset, nothing else
-    assert sorted(s3.calls) == ["bureau", "clients"]
-    assert len(paths) == 5  # 3 parquet + 2 S3
+        "application_master_2020-01.parquet", "payments_2020-01.parquet"}
+    # S3 got exactly the artifact subset: clients + bureau + master + payments
+    assert sorted(s3.calls) == ["application_master", "bureau",
+                                "clients", "payments"]
+    assert len(paths) == 8  # 4 parquet + 4 S3
 
 
 class _RecordingPostgres:
