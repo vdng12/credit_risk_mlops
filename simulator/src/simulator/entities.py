@@ -378,7 +378,7 @@ def generate_card_auths(
         "client_id": client_ids,
         "event_timestamp": timestamps,
         "amount": amount.tolist(),
-        "currency": ["EGP"] * n_events,
+        "currency": ["VND"] * n_events,
         "merchant_category": categories,
         "merchant_name": [f"MC-{c[:6].upper()}-{rng.integers(0, 999)}"
                           for c in categories],

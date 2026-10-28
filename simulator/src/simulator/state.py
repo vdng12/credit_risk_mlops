@@ -500,7 +500,7 @@ class AccountLedger:
                 "credit_account_id": b.bureau_id,
                 "credit_type": b.credit_type,
                 "credit_amount": b.credit_sum,
-                "credit_currency": "EGP",
+                "credit_currency": "VND",
                 "credit_start_date": snapshot_date - timedelta(days=30 * b.age_months),
                 "credit_duration_days": 30 * max(1, b.age_months),
                 "days_credit": -30 * b.age_months,

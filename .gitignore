@@ -28,3 +28,6 @@ outputs/
 # Simulator build artifacts
 simulator/dist/
 
+# Rubric
+docs/rubric/*
+!docs/rubric/.gitkeep
