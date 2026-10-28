@@ -453,13 +453,22 @@ class Simulator:
         return batches
 
     def play_forward(self, months: int) -> Iterator[MonthBatch]:
-        start = self._current_month or self.cfg.time.start_date
+        """Generate months forward (continuation semantics).
+
+        - fresh run (nothing backfilled): the configured ``start_date``
+          itself is the first month generated - it must not be skipped.
+        - after backfill(until): ``_current_month`` == until, so the next
+          month generated is the month AFTER it (advance then generate).
+        """
+        if self._current_month is None:
+            month = self.cfg.time.start_date.replace(day=1)
+        else:
+            month = self._next_month_date(self._current_month)
         for _ in range(months):
-            month = self._next_month_date(start)
             batch = self._generate_month(month)
             self._current_month = month
-            start = month
             yield batch
+            month = self._next_month_date(month)
 
     def next_month(self) -> MonthBatch:
         return next(self.play_forward(1))
