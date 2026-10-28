@@ -35,12 +35,15 @@ kind: Service
 metadata:
   name: polaris
 spec:
+  type: NodePort
   selector:
     app: polaris
   ports:
   - name: rest
     port: 8181
     targetPort: 8181
+    nodePort: 8181
   - name: mgmt
     port: 8182
     targetPort: 8182
+    nodePort: 8182

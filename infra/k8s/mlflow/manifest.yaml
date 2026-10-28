@@ -46,9 +46,11 @@ kind: Service
 metadata:
   name: mlflow
 spec:
+  type: NodePort
   selector:
     app: mlflow
   ports:
   - name: ui
     port: 5000
     targetPort: 5000
+    nodePort: 5000

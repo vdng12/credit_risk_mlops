@@ -9,6 +9,7 @@ if k3d cluster list 2>/dev/null | grep -q "$CLUSTER"; then
 else
   echo "==> Creating k3d cluster ($CLUSTER)..."
   k3d cluster create "$CLUSTER" \
+    --k3s-arg "--kube-apiserver-arg=service-node-port-range=1-65535@server:0" `# NodePort = host port` \
     -p "5432:5432"   `# postgres-source` \
     -p "5433:5433"   `# postgres-platform` \
     -p "8333:8333"   `# seaweedfs S3` \

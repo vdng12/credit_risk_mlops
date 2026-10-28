@@ -110,8 +110,10 @@ kind: Service
 metadata:
   name: postgres-source
 spec:
+  type: NodePort
   selector:
     app: postgres-source
   ports:
   - port: 5432
     targetPort: 5432
+    nodePort: 5432
