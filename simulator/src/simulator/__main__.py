@@ -33,8 +33,15 @@ def main() -> None:
                         help="Disable S3/SeaweedFS cold-path writes")
     parser.add_argument("--no-postgres", action="store_true",
                         help="Disable Postgres/gold-layer writes")
-    parser.add_argument("--output-dir", type=str, default="outputs/generated")
+    parser.add_argument("--output-dir", type=str, default=None,
+                        help="Output dir for the file write-through archive"
+                        " (default: outputs/generated or SIM_OUTPUT_DIR)")
     args = parser.parse_args()
+
+    if args.output_dir == "data/generated":
+        print("warning: output dir 'data/generated' is legacy; default is now"
+              " 'outputs/generated' (overridable via --output-dir or SIM_OUTPUT_DIR)")
+        args.output_dir = None
 
     cfg = SimConfig(
         n_customers=args.n_customers,
@@ -42,7 +49,8 @@ def main() -> None:
         seed=args.seed,
     )
     cfg.problems.enabled = not args.no_problems
-    cfg.sinks.file_output_dir = args.output_dir
+    if args.output_dir is not None:
+        cfg.sinks.file_output_dir = args.output_dir
     cfg.sinks.enable_s3 = not args.no_s3
     cfg.sinks.enable_postgres = not args.no_postgres
 

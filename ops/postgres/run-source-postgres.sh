@@ -13,7 +13,7 @@
 #   SOURCE_PG_PORT=5432 bash scripts/run-source-postgres.sh
 #   DATA_GEN_IMAGE=data-generator:latest \
 #     DATA_GEN_DATA_DIR=~/.cache/kagglehub/datasets/.../versions/1 \
-#     DATA_GEN_OUTPUT_DIR=./data/generated \
+#     DATA_GEN_OUTPUT_DIR=./outputs/generated \
 #     bash scripts/run-source-postgres.sh
 set -euo pipefail
 
