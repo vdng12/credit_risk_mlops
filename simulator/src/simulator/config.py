@@ -178,6 +178,7 @@ class SimConfig:
     problems: ProblemConfig = field(default_factory=ProblemConfig)
     sinks: SinkConfig = field(default_factory=SinkConfig)
     seed: int = 42
+    run_id: str = "default"
 
     # Flat-kwarg routing for common overrides
     _FLAT_TO_NESTED = {
@@ -200,6 +201,7 @@ class SimConfig:
         self.problems = ProblemConfig()
         self.sinks = SinkConfig()
         self.seed = 42
+        self.run_id = "default"
 
         for flat_key, (nested_obj, nested_key) in self._FLAT_TO_NESTED.items():
             if flat_key in kwargs:

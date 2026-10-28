@@ -969,6 +969,7 @@ source = { editable = "simulator" }
 dependencies = [
     { name = "numpy" },
     { name = "polars" },
+    { name = "pyyaml" },
     { name = "scikit-learn" },
     { name = "scipy" },
 ]
@@ -990,6 +991,7 @@ requires-dist = [
     { name = "polars", specifier = ">=1.0" },
     { name = "psycopg2-binary", marker = "extra == 'sinks'", specifier = ">=2.9" },
     { name = "pyarrow", marker = "extra == 'sinks'", specifier = ">=14" },
+    { name = "pyyaml", specifier = ">=6.0" },
     { name = "scikit-learn", specifier = ">=1.6" },
     { name = "scipy", specifier = ">=1.14" },
     { name = "sqlalchemy", marker = "extra == 'sinks'", specifier = ">=2.0" },
