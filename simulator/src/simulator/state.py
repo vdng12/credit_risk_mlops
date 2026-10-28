@@ -11,6 +11,7 @@ This is what makes child entities structurally dependent:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import timedelta
 
 import numpy as np
 from numpy.random import Generator
@@ -181,6 +182,9 @@ class Loan:
     annuity: float
     application_id: str = ""     # FK back to the application master (label re-join)
     hazard: float = 0.0          # P(delinquent month), from the PD curve
+    payment_day: int = 1         # day-of-month the instalment is due (1..28);
+                                 # deterministic per loan so monthly payment
+                                 # dates spread across the month (nightly file)
     months_paid: int = 0
     dpd_months: int = 0          # consecutive missed/partial months
     paid_off: bool = False       # True once months_paid reaches term_months
@@ -295,8 +299,9 @@ class AccountLedger:
         hz = self.loan_hazard(np.asarray(approvals["factors"]),
                               approvals["term_months"])
         for i in range(n):
+            loan_id = f"LN-{approvals['client_id'][i]}-{len(self.loans):06d}"
             self.loans.append(Loan(
-                loan_id=f"LN-{approvals['client_id'][i]}-{len(self.loans):06d}",
+                loan_id=loan_id,
                 client_id=approvals["client_id"][i],
                 factors=approvals["factors"][i],
                 term_months=int(approvals["term_months"][i]),
@@ -304,6 +309,11 @@ class AccountLedger:
                 annuity=float(approvals["annuity"][i]),
                 application_id=(app_ids[i] if app_ids is not None else ""),
                 hazard=float(hz[i]),
+                # stable day-of-month due date: spreads the monthly payment
+                # rows across the month so nightly payment files carry
+                # content (Phase 0: derived from the loan id, replay-safe)
+                payment_day=1 + (int.from_bytes(
+                    loan_id.encode("utf-8")[-8:], "big") % 28),
             ))
 
     def burn_in(self, loans: list[Loan], months_paid: np.ndarray) -> None:
@@ -392,6 +402,10 @@ class AccountLedger:
             self.rng = month_rng(self.root_seed, "ledger", month)
         p = self.p
         payment_rows: list[dict] = []
+        # due day clamped to the month's length (payment_day is 1..28)
+        month_len = (
+            (payment_date.replace(day=28) + timedelta(days=4)).replace(day=1)
+            - timedelta(days=1)).day
 
         # --- loans: payment behavior -> DPD ---
         for loan in self.loans:
@@ -413,7 +427,10 @@ class AccountLedger:
                 "loan_id": loan.loan_id,
                 "client_id": loan.client_id,
                 "application_id": loan.application_id,
-                "payment_date": payment_date,
+                # each loan pays on its own due day: payment dates spread
+                # across the month (the nightly payment-file cadence)
+                "payment_date": payment_date.replace(
+                    day=min(loan.payment_day, month_len)),
                 "amount": float(amount),
                 "principal_portion": float(amount * 0.65),
                 "interest_portion": float(amount * 0.35),
