@@ -9,7 +9,7 @@ dependencies = [
     "nbformat>=5.11.1",
 ]
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = ["pytest>=8.0"]
 eval = [
     "lightgbm>=4.6",
@@ -18,6 +18,9 @@ eval = [
     "numpy>=2.0",
     "polars>=1.0",
 ]
+
+[tool.uv]
+default-groups = ["dev"]
 
 [tool.uv.sources]
 simulator = { workspace = true }

@@ -22,6 +22,8 @@ __marimo__/
 # Generated data
 output/
 */output/
+outputs/
+*/outputs/
 
 # Simulator build artifacts
 simulator/dist/

@@ -16,6 +16,14 @@ class SinkManager:
         self.cfg = config
         Path(self.cfg.sinks.file_output_dir).mkdir(parents=True, exist_ok=True)
 
+    @property
+    def s3_enabled(self) -> bool:
+        return self.cfg.sinks.enable_s3
+
+    @property
+    def postgres_enabled(self) -> bool:
+        return self.cfg.sinks.enable_postgres
+
     def to_parquet(
         self,
         df: pl.DataFrame,
@@ -56,29 +64,23 @@ class SinkManager:
         if_exists: str = "append",
     ) -> None:
         import sqlalchemy as sa
-        engine = sa.create_engine(self.cfg.sinks.postgres_dsn)
+
+        # `postgresql://` defaults to the psycopg (v3) dialect in modern
+        # SQLAlchemy; pin the installed driver (psycopg2-binary) when no
+        # explicit `+driver` is present in the DSN.
+        url = sa.engine.make_url(self.cfg.sinks.postgres_dsn)
+        if url.drivername == "postgresql":
+            url = url.set(drivername="postgresql+psycopg2")
+        engine = sa.create_engine(url)
         pdf = df.to_pandas()
+        with engine.connect() as conn:
+            # Tolerant append: project onto the target table's columns (the
+            # OLTP schema is the contract; e.g. loan_applications carries only
+            # pre-decision fields, decision outcome lives in decisions).
+            inspector = sa.inspect(conn)
+            if table_name in inspector.get_table_names():
+                existing = {c["name"] for c in inspector.get_columns(table_name)}
+                pdf = pdf[[c for c in pdf.columns if c in existing]]
         pdf.to_sql(table_name, engine, if_exists=if_exists, index=False)
         engine.dispose()
 
-    def to_kafka(
-        self,
-        df: pl.DataFrame,
-        topic: str,
-        key_column: Optional[str] = None,
-    ) -> None:
-        try:
-            from kafka import KafkaProducer
-            import json
-        except ImportError:
-            raise ImportError("kafka-python not installed")
-        producer = KafkaProducer(
-            bootstrap_servers=self.cfg.sinks.kafka_brokers,
-            value_serializer=lambda v: json.dumps(v).encode("utf-8"),
-            key_serializer=lambda k: k.encode("utf-8") if k else None,
-        )
-        for row in df.iter_rows(named=True):
-            key = row.get(key_column) if key_column else None
-            producer.send(topic, value=row, key=key)
-        producer.flush()
-        producer.close()

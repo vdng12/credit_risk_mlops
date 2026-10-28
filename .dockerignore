@@ -1,0 +1,34 @@
+# Version control
+.git
+
+# Virtual environments
+.venv
+**/.venv
+
+# Python artifacts
+__pycache__
+**/__pycache__
+*.py[oc]
+*.egg-info
+**/*.egg-info
+.pytest_cache
+**/.pytest_cache
+
+# Build output
+dist
+**/dist
+build
+**/build
+
+# Generated data (workshop validation + simulation output)
+output
+**/output
+outputs
+**/outputs
+
+# Secrets / local overrides
+.env
+
+# Tooling
+.notebooks
+**/__marimo__

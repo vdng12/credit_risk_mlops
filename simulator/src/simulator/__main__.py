@@ -29,7 +29,11 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--no-problems", action="store_true",
                         help="Disable data problem injection")
-    parser.add_argument("--output-dir", type=str, default="data/generated")
+    parser.add_argument("--no-s3", action="store_true",
+                        help="Disable S3/SeaweedFS cold-path writes")
+    parser.add_argument("--no-postgres", action="store_true",
+                        help="Disable Postgres/gold-layer writes")
+    parser.add_argument("--output-dir", type=str, default="outputs/generated")
     args = parser.parse_args()
 
     cfg = SimConfig(
@@ -39,6 +43,8 @@ def main() -> None:
     )
     cfg.problems.enabled = not args.no_problems
     cfg.sinks.file_output_dir = args.output_dir
+    cfg.sinks.enable_s3 = not args.no_s3
+    cfg.sinks.enable_postgres = not args.no_postgres
 
     sim = Simulator(cfg)
 
@@ -52,7 +58,7 @@ def main() -> None:
     print(f"\nSimulating {args.months} months forward...")
     forward_batches = []
     for batch in sim.play_forward(args.months):
-        paths = batch.to_sinks(sim.sink, run_id="incremental", mode="incremental")
+        paths = batch.to_sinks(sim.sink, run_id="incremental")
         forward_batches.append(batch)
         n_rows = sum(
             df.height for df in [

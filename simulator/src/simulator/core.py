@@ -38,21 +38,24 @@ from simulator.state import AccountLedger, draw_from_model
 class MonthBatch:
     """All entities produced during one simulated month.
 
-    Split into two release paths:
+    Two release paths - both COLD-first; Kafka is CDC-derived downstream:
 
-      HOT  (stream, Kafka/Redpanda):
-          applications          -- pre-decision submission events only
-          card_auths            -- authorization events (incl. declined)
-
-      COLD (batch, Postgres + object store):
+      OLTP source tables (streamed by Debezium CDC on postgres-source):
           clients               -- monthly customer master
+          loan_applications     -- pre-decision submission events
+          card_authorizations   -- authorization events (incl. declined)
           application_decisions -- nightly outcome rows (status, decision)
+          payments              -- nightly instalment payment file
+
+      Analytical / object store:
           application_master    -- submitted + decision joined (the master
-                                  table with cutover semantics)
+                                  table with cutover semantics; gold layer)
           pos_balances          -- monthly instalment balance
           card_balances         -- monthly card balance
           bureau                -- external bureau monthly drop
-          payments              -- nightly instalment payment file
+
+      Kafka/Redpanda topics are NOT written by the generator; the Debezium
+      connector on postgres-source re-streams the OLTP tables.
     """
 
     month: date
@@ -72,7 +75,7 @@ class MonthBatch:
     # ------------------------------------------------------------------
 
     def hot_events(self) -> dict[str, Optional[pl.DataFrame]]:
-        """Stream entities: one event per row -> Kafka topics."""
+        """Stream-shaped entities: written to OLTP tables, re-streamed by CDC."""
         return {
             "loan_applications": self.applications,     # pre-decision
             "card_authorizations": self.card_auths,
@@ -90,49 +93,37 @@ class MonthBatch:
             "payments": self.payments,
         }
 
-    # How hot stream events are released depends on the run mode:
-    #   backfill    -> historical events written as raw log partitions
-    #                   (object store) for downstream replay
-    #   incremental -> pushed to the live Kafka/Redpanda topic
+    def all_entities(self) -> dict[str, Optional[pl.DataFrame]]:
+        """Every entity produced this month (cold + stream-shaped)."""
+        return {**self.cold_batches(), **self.hot_events()}
+
     def to_sinks(
         self,
         sink: SinkManager,
-        run_id: str = "backfill",
-        mode: str = "backfill",
+        run_id: str = "incremental",
     ) -> list[str]:
         paths = []
         month_str = self.month.strftime("%Y-%m")
 
-        # cold path: batch snapshots -> object store + (optionally) Postgres
-        for name, df in self.cold_batches().items():
-            if df is not None and df.height > 0:
-                paths.append(sink.to_parquet(df, name, month_str, run_id))
-                try:
-                    paths.append(sink.to_s3(df, name, month_str, run_id))
-                except Exception:
-                    pass
+        # design routing (AGENTS.md, Data generator section): every entity lands in
+        # the local file sink as write-through archive; object-store entities
+        # go to S3; the OLTP + gold entities go to Postgres lending_db (the
+        # Debezium CDC connector turns the OLTP tables into the Kafka stream).
+        # Sink failures are loud - nothing is silently swallowed.
+        s3_entities = {"clients", "application_decisions",
+                       "pos_balances", "card_balances", "bureau"}
+        pg_entities = {"clients", "loan_applications", "card_authorizations",
+                       "application_decisions", "application_master", "payments"}
 
-        # hot path: stream events
-        key_cols = {"loan_applications": "application_id",
-                    "card_authorizations": "auth_id"}
-        for name, df in self.hot_events().items():
+        for name, df in self.all_entities().items():
             if df is None or df.height == 0:
                 continue
-            if mode == "incremental":
-                try:
-                    sink.to_kafka(df, topic=name, key_column=key_cols.get(name))
-                    paths.append(f"kafka:{name}")
-                except Exception:
-                    # Kafka unavailable -> fall back to local raw event log
-                    subdir = f"raw/{name}"
-                    paths.append(sink.to_parquet(df, subdir, month_str, run_id))
-            else:
-                subdir = f"raw/{name}"
-                paths.append(sink.to_parquet(df, subdir, month_str, run_id))
-                try:
-                    paths.append(sink.to_s3(df, subdir, month_str, run_id))
-                except Exception:
-                    pass
+            paths.append(sink.to_parquet(df, name, month_str, run_id))
+            if name in s3_entities and sink.s3_enabled:
+                paths.append(sink.to_s3(df, name, month_str, run_id))
+            if name in pg_entities and sink.postgres_enabled:
+                sink.to_postgres(df, table_name=name)
+                paths.append(f"postgres:{name}")
         return paths
 
 

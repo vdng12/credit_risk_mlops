@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from datetime import date
+
+
+def _env(name: str, default: str) -> str:
+    """12-factor default: SIM_* env vars set the base, explicit args win."""
+    return os.getenv(name, default)
 
 
 @dataclass
@@ -135,18 +141,31 @@ class ProblemConfig:
 
 @dataclass
 class SinkConfig:
-    """Output sink configuration."""
+    """Output sink configuration (file / S3 / Postgres).
 
-    postgres_dsn: str = "postgresql://lending:lending123@localhost:5432/lending_db"
-    s3_endpoint: str = "http://localhost:8333"
-    s3_access_key: str = "seaweedfs"
-    s3_secret_key: str = "seaweedfs123"
-    s3_bucket: str = "risk-data"
-    s3_region: str = "us-east-1"
-    kafka_brokers: str = "localhost:9092"
-    kafka_applications_topic: str = "loan_applications"
-    kafka_card_auths_topic: str = "card_authorizations"
-    file_output_dir: str = "data/generated"
+    Endpoints default to localhost (host-mapped k3d ports) and can be
+    overridden per run via ``SIM_*`` env vars or by passing a SinkConfig
+    instance to ``SimConfig(sinks=...)``. Kafka/Redpanda is NOT written
+    directly — the Debezium CDC connector on postgres-source re-streams
+    the OLTP tables.
+    """
+
+    postgres_dsn: str = field(
+        default_factory=lambda: _env(
+            "SIM_POSTGRES_DSN",
+            "postgresql://lending:lending123@localhost:5432/lending_db",
+        )
+    )
+    s3_endpoint: str = field(default_factory=lambda: _env("SIM_S3_ENDPOINT", "http://localhost:8333"))
+    s3_access_key: str = field(default_factory=lambda: _env("SIM_S3_ACCESS_KEY", "seaweedfs"))
+    s3_secret_key: str = field(default_factory=lambda: _env("SIM_S3_SECRET_KEY", "seaweedfs123"))
+    s3_bucket: str = field(default_factory=lambda: _env("SIM_S3_BUCKET", "risk-data"))
+    s3_region: str = field(default_factory=lambda: _env("SIM_S3_REGION", "us-east-1"))
+    file_output_dir: str = field(default_factory=lambda: _env("SIM_OUTPUT_DIR", "outputs/generated"))
+
+    # Design routing toggles — disable a sink for file-only / dry-run work.
+    enable_s3: bool = True
+    enable_postgres: bool = True
 
 
 @dataclass

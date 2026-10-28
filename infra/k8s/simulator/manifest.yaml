@@ -1,0 +1,49 @@
+# Data generator job — runs the `simulator` console script from the
+# risk-simulator image (see simulator/Dockerfile). Produces the daily HOT/COLD
+# lanes the DE pipeline ingests.
+#
+#   docker build -f simulator/Dockerfile -t risk-simulator:latest .
+#   k3d image import risk-simulator:latest --name risk-cluster
+#   kubectl apply -f infra/k8s/simulator/manifest.yaml
+#
+# NOTE: Sink endpoints (postgres_dsn / s3_endpoint / kafka_brokers in
+# SinkConfig) default to localhost. Until the CLI exposes them, either run
+# with local file output (--output-dir, mounted below) or override via a thin
+# env-driven wrapper in simulator.src.simulator.__main__.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: data-generator
+  namespace: default
+spec:
+  schedule: "0 2 * * *"            # nightly COLD dump + HOT feed injection
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: simulator
+              image: risk-simulator:latest
+              args:
+                - --n-customers
+                - "50000"
+                - --months
+                - "1"
+                - --start
+                - "2020-01-01"
+                - --seed
+                - "42"
+                - --output-dir
+                - /data/generated
+              resources:
+                requests: { cpu: "1", memory: "2Gi" }
+                limits:   { cpu: "4", memory: "8Gi" }
+              volumeMounts:
+                - name: output
+                  mountPath: /data/generated
+          volumes:
+            - name: output
+              emptyDir: {}        # TODO: PVC/object-store sink for durability
