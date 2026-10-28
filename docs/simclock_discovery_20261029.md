@@ -234,3 +234,26 @@ Plan (when the online path is built):
 - [ ] Enforce the 21-day bureau lag in the bureau drop emission
 - [ ] Prefer date-derived boundary predicates (e.g. `is_bureau_day(date)`)
       for restart-proof resume; keep the clock for pacing only
+
+---
+
+## 12. Revived (2026-10-29)
+
+`clock.py` was rewritten on top of this note's analysis:
+
+- `month_iterator` now yields the completed month (was an empty generator).
+- `tick_to_month_end` lands on the ACTUAL last day - the original `+1`
+  landed on the next month's 1st (a latent off-by-one). If the current
+  month is already closed it closes the next month instead, so sequential
+  calls never tick 0 days.
+- Boundary flags are now re-derived from restart-proof date predicates
+  (`is_month_end(d)`, `is_bureau_drop_day(d)` = `(d - lag).day == 1`),
+  with the `_last_*_processed` markers kept only as pacing state - a
+  resumed process can derive every boundary day from the date alone.
+- Corrected month-boundary semantics: fires only at month END (the close),
+  not on the 1st/2nd - so day-by-day ticking yields exactly one close per
+  month. Bureau boundary fires on the drop day (~22nd).
+- `tick(days>1)` jumps may skip boundaries (boolean, not count) - tick
+  day-by-day for full fidelity. Documented and tested.
+
+Emitters (Phase 5) can now tick day-by-day and flush on the three flags.
