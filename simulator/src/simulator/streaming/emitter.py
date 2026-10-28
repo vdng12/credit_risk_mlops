@@ -1,24 +1,16 @@
-"""Day-granular delivery of a month's hot entities (SimClock-driven).
+"""Hot-lane day helpers (streaming only).
 
-The generator produces a whole month's clean hot entities at once; the
-emitter RE-PACES delivery day by day through SimClock, applies the
-streaming problems per day, and hands each day's bundle to a writer (in
-production: the online lane -> postgres -> Debezium CDC).
-
-Determinism: day slices are pure subsets of the (seed, entity, month)
-frames (Phase 0), so the monthly batch and the per-day stream carry the
-same event set; only the real ingestion stamps differ.
+The SimClock day loop and the lane dispatch live in ``simulator.livestage``;
+this module provides what the HOT lane needs: day-slicing of the month's
+events and the streaming-problem application on a single day's bundle.
 """
 
 from __future__ import annotations
 
-import time
-from datetime import datetime, timedelta
-from typing import Any, Callable
+from datetime import datetime, date, timedelta
 
 import polars as pl
 
-from simulator.clock import SimClock
 from simulator.streaming.problems import StreamProblemPipeline
 
 # hot entity -> the event timestamp column used for day slicing and late shift
@@ -40,81 +32,31 @@ def slice_day(frame: pl.DataFrame | None, ts_col: str, day) -> pl.DataFrame | No
     return frame.filter(pl.col(ts_col).dt.date() == day)
 
 
-def _now_for(day) -> datetime:
+def now_for(day) -> datetime:
     return datetime.combine(day, datetime.min.time())
 
 
-def emit_month_stream(
-    batch,
-    clock: SimClock,
-    pipeline: StreamProblemPipeline,
-    writer: Callable[[dict[str, pl.DataFrame], Any, str], dict[str, Any]],
-    tick_seconds: float = 0.0,
-) -> list[dict[str, Any]]:
-    """Deliver ``batch.month``'s hot entities day by day.
+def prepare_hot_bundle(
+    batch, day: date, pipeline: StreamProblemPipeline
+) -> tuple[dict[str, pl.DataFrame | None], int, int]:
+    """The day's hot entities with late arrival applied.
 
-    For each simulated day:
-
-    1. slice the month's auths/applications to that day
-    2. burst: repeat the day bundle ``events_for_tick(tick, 1)`` times
-    3. late arrival: re-stamp a fraction of the day's event timestamps
-    4. duplicate replay (rate): deliver a remembered past day bundle
-       instead of a fresh one (at-least-once; volume stays put)
-    5. hand each delivery to ``writer(bundle, day, kind)``
-
-    Returns per-delivery stats (day, kind, rows, late, max_delay_seconds).
+    Returns (bundle, late_count, max_delay_seconds). Duplicate replay and
+    burst are handled by the dispatcher (livestage), which decides whether
+    a replay replaces this day's slot.
     """
-    month = batch.month
-    auths, apps = batch.card_auths, batch.applications
-    deliveries: list[dict[str, Any]] = []
-    tick_index = 0
-
-    for _ in range(days_in_month(month)):
-        # deliver the clock's CURRENT day first, advance after - so the
-        # month's last day is not skipped by the final tick
-        day = clock.current_date
-        now = _now_for(day)
-
-        bundle = {
-            "card_authorizations": slice_day(auths, "event_timestamp", day),
-            "loan_applications": slice_day(apps, "submission_timestamp", day),
-        }
-
-        late_total = 0
-        max_delay = 0
-        for name, frame in bundle.items():
-            if frame is None or frame.height == 0:
-                continue
-            frame, n, d = pipeline.apply_late(frame, _HOT_TS[name], now)
-            bundle[name] = frame
+    late_total = 0
+    max_delay = 0
+    now = now_for(day)
+    bundle: dict[str, pl.DataFrame | None] = {}
+    for name, ts_col in _HOT_TS.items():
+        frame = slice_day(getattr(batch, {
+            "card_authorizations": "card_auths",
+            "loan_applications": "applications",
+        }[name]), ts_col, day)
+        if frame is not None and frame.height > 0:
+            frame, n, d = pipeline.apply_late(frame, ts_col, now)
             late_total += n
             max_delay = max(max_delay, d)
-
-        replay = pipeline.replay(now)
-        if replay is not None:
-            kind = "replay"
-            delivery = replay
-        else:
-            kind = "new"
-            delivery = bundle
-            pipeline.remember(bundle)
-
-        repeat = pipeline.events_for_tick(tick_index, 1)
-        for _ in range(repeat):
-            rows = sum(
-                f.height for f in delivery.values() if f is not None)
-            stats = writer(delivery, day, kind)
-            deliveries.append({
-                "day": day.isoformat(),
-                "kind": kind,
-                "rows": rows,
-                "late": late_total if kind == "new" else 0,
-                "max_delay_seconds": max_delay if kind == "new" else 0,
-                **stats,
-            })
-            if tick_seconds:
-                time.sleep(tick_seconds)
-        tick_index += 1
-        clock.tick(days=1)   # move to the next delivery day
-
-    return deliveries
+        bundle[name] = frame
+    return bundle, late_total, max_delay

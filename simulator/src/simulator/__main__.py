@@ -232,10 +232,9 @@ def cmd_stream(ns: argparse.Namespace) -> int:
     each day's bundle to the online lane (postgres -> CDC)."""
     import numpy as np
 
+    from simulator.livestage import LiveStage
     from simulator.sinks import SinkManager
-    from simulator.streaming.emitter import emit_month_stream
     from simulator.streaming.problems import StreamProblemPipeline
-    from simulator.clock import SimClock
 
     cfg = load_config(ns.config)
     scope = _apply_overrides(cfg, ns)
@@ -256,23 +255,22 @@ def cmd_stream(ns: argparse.Namespace) -> int:
         np.random.default_rng(cfg.seed + 3), cfg.streaming)
     tick_seconds = (ns.tick_seconds if ns.tick_seconds is not None
                     else cfg.streaming.emit.tick_seconds)
+    stage = LiveStage(sink, pipeline,
+                      bureau_lag_days=cfg.time.bureau_drop_lag_days)
 
-    def writer(bundle, day, _kind):
-        return {"paths": sink.online.write(
-            bundle, day.isoformat(), run_id)}
-
-    total_deliveries = 0
+    total_hot = late = replays = 0
     for batch in sim.play_forward(months):
-        print(f"{batch.month}: emitting stream...")
-        clock = SimClock(start_date=batch.month,
-                         bureau_lag_days=cfg.time.bureau_drop_lag_days)
-        stats = emit_month_stream(batch, clock, pipeline, writer,
-                                  tick_seconds=tick_seconds)
-        total_deliveries += len(stats)
-        late = sum(s["late"] for s in stats)
-        replays = sum(s["kind"] == "replay" for s in stats)
-        print(f"  day deliveries={len(stats)} late={late} replays={replays}")
-    print(f"\nstream complete: {total_deliveries} day deliveries")
+        print(f"{batch.month}: emitting live stage...")
+        stats = stage.emit(batch, run_id, tick_seconds=tick_seconds)
+        hot = [s for s in stats if s["kind"] in ("new", "replay")]
+        nights = sum(s["kind"] == "nightly" for s in stats)
+        closes = sum(s["kind"] == "monthly" for s in stats)
+        total_hot += len(hot)
+        late += sum(s["late"] for s in hot)
+        replays += sum(s["kind"] == "replay" for s in hot)
+        print(f"  hot days={len(hot)} nightly files={nights} "
+              f"month closes={closes} late={late} replays={replays}")
+    print(f"\nstream complete: {total_hot} hot day deliveries")
     return 0
 
 

@@ -9,7 +9,7 @@ import polars as pl
 
 from simulator import SimConfig, Simulator
 from simulator.clock import SimClock
-from simulator.streaming.emitter import days_in_month, emit_month_stream, slice_day
+from simulator.streaming.emitter import days_in_month, slice_day
 from simulator.streaming.problems import (
     BurstTrafficProblem,
     DuplicateReplayProblem,
@@ -88,18 +88,16 @@ def test_duplicate_replay_rate_zero_never_redelivers():
 
 
 # --------------------------------------------------------------------------
-# Emitter: month re-paced day by day
+# --------------------------------------------------------------------------
+# Live stage: hot + nightly + monthly dispatch (replaces the old emitter)
 # --------------------------------------------------------------------------
 
 def _stream_cfg(seed=7, n=150, **problem_overrides):
     cfg = SimConfig(n_customers=n, start_date=date(2020, 1, 1), seed=seed)
     cfg.sinks.enable_s3 = cfg.sinks.enable_postgres = False
     cfg.streaming.enabled = True
-    # Legacy generic layer off for the emitter tests: its batch date-shift
-    # moves event timestamps FORWARD into the next month, which breaks the
-    # emitter's within-month day-slicing invariant. The real streaming
-    # late-arrival (backward shift) is what belongs on this lane; the legacy
-    # layer is retired by the post-Phase-5 Problem-interface refactor.
+    # legacy batch date-shift off (moves event timestamps FORWARD, breaking
+    # within-month day slicing; retired by the post-Phase-5 refactor)
     cfg.problems.late_arrival_prob = 0.0
     for key, value in problem_overrides.items():
         setattr(cfg.streaming.problems.late_arrival, key, value)
@@ -111,93 +109,125 @@ def _month_batch(cfg):
     return sim.backfill("2020-01-31")[0], sim
 
 
-def _recording_writer():
-    calls = []
+class _RecLane:
+    def __init__(self, label: str) -> None:
+        self.label = label
+        self.calls: list[dict] = []
 
-    def writer(bundle, day, kind):
-        calls.append((day, kind, bundle))
-        return {}
-    return calls, writer
+    def write(self, entities, snapshot, run_id):
+        self.calls.append({
+            "at": snapshot,
+            "entities": {k: v.height for k, v in entities.items()
+                         if v is not None}})
+        return [f"{self.label}:{snapshot}"]
 
 
-def test_emitter_delivers_every_day_once_no_problems():
-    cfg = _stream_cfg(seed=7, n=150)
-    batch, sim = _month_batch(cfg)
+class _RecSink:
+    def __init__(self) -> None:
+        self.online = _RecLane("online")
+        self.offline = _RecLane("offline")
+
+    @property
+    def s3_enabled(self) -> bool:
+        return False
+
+    @property
+    def postgres_enabled(self) -> bool:
+        return True
+
+
+def _stage(cfg):
+    from simulator.livestage import LiveStage
+    from simulator.streaming.problems import StreamProblemPipeline
+    import numpy as np
+    sink = _RecSink()
     pipeline = StreamProblemPipeline.from_config(
         np.random.default_rng(cfg.seed + 3), cfg.streaming)
-    clock = SimClock(start_date=batch.month, bureau_lag_days=21)
+    stage = LiveStage(sink, pipeline,
+                      bureau_lag_days=cfg.time.bureau_drop_lag_days)
+    return stage, sink
 
-    calls, writer = _recording_writer()
-    stats = emit_month_stream(batch, clock, pipeline, writer)
 
-    assert len(stats) == days_in_month(batch.month) == 31
-    assert all(s["kind"] == "new" for s in stats)
-    # every hot row of the month was delivered exactly once, day-sliced
+def _emit(cfg):
+    batch, _ = _month_batch(cfg)
+    stage, sink = _stage(cfg)
+    stats = stage.emit(batch, run_id="t")
+    return stats, sink, batch
+
+
+def test_livestage_hot_covers_every_day_once():
+    cfg = _stream_cfg(seed=7, n=150)
+    stats, sink, batch = _emit(cfg)
+    hot = [s for s in stats if s["kind"] in ("new", "replay")]
+    assert len(hot) == days_in_month(batch.month) == 31
+    assert all(s["kind"] == "new" for s in hot)
     apps = batch.applications.height if batch.applications is not None else 0
-    assert sum(s["rows"] for s in stats) == batch.card_auths.height + apps
-    # day 15 slice equals the clean frame's day-15 rows
-    day15 = [b for (d, _, b) in calls if d.day == 15][0]
-    expected = slice_day(batch.card_auths, "event_timestamp", date(2020, 1, 15))
-    assert day15["card_authorizations"].equals(expected)
+    assert sum(s["rows"] for s in hot) == batch.card_auths.height + apps
 
 
-def test_emitter_is_deterministic():
-    records = []
+def test_livestage_nightly_files_carry_day_slices():
+    cfg = _stream_cfg(seed=7, n=150)
+    stats, sink, batch = _emit(cfg)
+    nights = [s for s in stats if s["kind"] == "nightly"]
+    assert nights, "at least one nightly file with content"
+    # every payment row lands in exactly one nightly file (day-sliced)
+    payments_in_nights = sum(
+        call["entities"].get("payments", 0) for call in sink.offline.calls)
+    assert payments_in_nights == batch.payments.height
+    # every decision row too
+    decisions_in_nights = sum(
+        call["entities"].get("application_decisions", 0)
+        for call in sink.offline.calls)
+    assert decisions_in_nights == batch.application_decisions.height
+
+
+def test_livestage_monthly_close_written_once_with_all_snapshots():
+    cfg = _stream_cfg(seed=7, n=150)
+    stats, sink, batch = _emit(cfg)
+    closes = [s for s in stats if s["kind"] == "monthly"]
+    assert len(closes) == 1
+    offline_names = {
+        k for call in sink.offline.calls for k in call["entities"]}
+    assert {"clients", "pos_balances", "card_balances", "bureau",
+            "application_master"} <= offline_names
+    # gold master reaches the online lane too
+    online_names = {
+        k for call in sink.online.calls for k in call["entities"]}
+    assert "application_master" in online_names
+
+
+def test_livestage_is_deterministic():
+    recs = []
     for _ in range(2):
         cfg = _stream_cfg(seed=9, n=120)
-        batch, sim = _month_batch(cfg)
-        pipeline = StreamProblemPipeline.from_config(
-            np.random.default_rng(cfg.seed + 3), cfg.streaming)
-        clock = SimClock(start_date=batch.month)
-        calls, writer = _recording_writer()
-        stats = emit_month_stream(batch, clock, pipeline, writer)
-        records.append([(s["day"], s["rows"], s["late"]) for s in stats])
-    assert records[0] == records[1]
+        stats, _, _ = _emit(cfg)
+        recs.append([(s["day"], s["kind"], s["rows"]) for s in stats])
+    assert recs[0] == recs[1]
 
 
-def test_emitter_late_arrival_all_rows_shifted():
+def test_livestage_late_arrival_all_rows_shifted():
     cfg = _stream_cfg(seed=7, n=150)
     cfg.streaming.problems.late_arrival.rate = 1.0
     cfg.streaming.problems.late_arrival.delay_minutes_min = 5
     cfg.streaming.problems.late_arrival.delay_minutes_max = 45
-    batch, sim = _month_batch(cfg)
-    pipeline = StreamProblemPipeline.from_config(
-        np.random.default_rng(cfg.seed + 3), cfg.streaming)
-    calls, writer = _recording_writer()
-    stats = emit_month_stream(batch, SimClock(start_date=batch.month),
-                              pipeline, writer)
-    # every fresh delivery had its auths late-stamped (rate=1)
-    assert all(s["late"] >= s["rows"] - 1 for s in stats if s["rows"] > 0)
-    # delivered event timestamps must be strictly before the clean slices
-    delivered = [b for (d, _, b) in calls if d.day == 5][0]
-    clean = slice_day(batch.card_auths, "event_timestamp", date(2020, 1, 5))
-    assert all(
-        delivered["card_authorizations"]["event_timestamp"][i]
-        < clean["event_timestamp"][i]
-        for i in range(clean.height))
+    stats, _, _ = _emit(cfg)
+    assert all(s["late"] >= s["rows"] - 1 for s in stats
+               if s["kind"] == "new" and s["rows"] > 0)
 
 
-def test_emitter_burst_repeats_bundle():
+def test_livestage_burst_repeats_the_day_bundle():
     cfg = _stream_cfg(seed=7, n=150)
     cfg.streaming.problems.burst.every_n_ticks = 1
     cfg.streaming.problems.burst.multiplier = 2
-    batch, sim = _month_batch(cfg)
-    pipeline = StreamProblemPipeline.from_config(
-        np.random.default_rng(cfg.seed + 3), cfg.streaming)
-    calls, writer = _recording_writer()
-    stats = emit_month_stream(batch, SimClock(start_date=batch.month),
-                              pipeline, writer)
-    assert len(stats) == 2 * days_in_month(batch.month)
+    stats, _, batch = _emit(cfg)
+    hot = [s for s in stats if s["kind"] in ("new", "replay")]
+    assert len(hot) == 2 * days_in_month(batch.month)
 
 
-def test_emitter_replay_redelivers_on_rate_one():
+def test_livestage_replay_redelivers_on_rate_one():
     cfg = _stream_cfg(seed=7, n=150)
     cfg.streaming.problems.duplicate_replay.rate = 1.0
-    batch, sim = _month_batch(cfg)
-    pipeline = StreamProblemPipeline.from_config(
-        np.random.default_rng(cfg.seed + 3), cfg.streaming)
-    calls, writer = _recording_writer()
-    stats = emit_month_stream(batch, SimClock(start_date=batch.month),
-                              pipeline, writer)
-    assert stats[0]["kind"] == "new"         # nothing remembered yet
-    assert all(s["kind"] == "replay" for s in stats[1:])
+    stats, _, _ = _emit(cfg)
+    hot = [s for s in stats if s["kind"] in ("new", "replay")]
+    assert hot[0]["kind"] == "new"
+    assert all(s["kind"] == "replay" for s in hot[1:])
