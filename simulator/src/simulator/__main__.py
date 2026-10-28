@@ -226,6 +226,56 @@ def cmd_calibrate(ns: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_stream(ns: argparse.Namespace) -> int:
+    """Generate months forward, then re-deliver each month's hot entities
+    day by day (SimClock) with the streaming problems attached, writing
+    each day's bundle to the online lane (postgres -> CDC)."""
+    import numpy as np
+
+    from simulator.sinks import SinkManager
+    from simulator.streaming.emitter import emit_month_stream
+    from simulator.streaming.problems import StreamProblemPipeline
+    from simulator.clock import SimClock
+
+    cfg = load_config(ns.config)
+    scope = _apply_overrides(cfg, ns)
+    run_id, months = scope["run_id"], scope["months"]
+
+    if not cfg.streaming.enabled:
+        print("stream needs streaming.enabled: true in the config",
+              file=sys.stderr)
+        return 2
+    if not cfg.sinks.enable_postgres:
+        print("stream needs the postgres sink enabled (the CDC source)",
+              file=sys.stderr)
+        return 2
+
+    sim = Simulator(cfg)
+    sink = SinkManager(cfg)
+    pipeline = StreamProblemPipeline.from_config(
+        np.random.default_rng(cfg.seed + 3), cfg.streaming)
+    tick_seconds = (ns.tick_seconds if ns.tick_seconds is not None
+                    else cfg.streaming.emit.tick_seconds)
+
+    def writer(bundle, day, _kind):
+        return {"paths": sink.online.write(
+            bundle, day.isoformat(), run_id)}
+
+    total_deliveries = 0
+    for batch in sim.play_forward(months):
+        print(f"{batch.month}: emitting stream...")
+        clock = SimClock(start_date=batch.month,
+                         bureau_lag_days=cfg.time.bureau_drop_lag_days)
+        stats = emit_month_stream(batch, clock, pipeline, writer,
+                                  tick_seconds=tick_seconds)
+        total_deliveries += len(stats)
+        late = sum(s["late"] for s in stats)
+        replays = sum(s["kind"] == "replay" for s in stats)
+        print(f"  day deliveries={len(stats)} late={late} replays={replays}")
+    print(f"\nstream complete: {total_deliveries} day deliveries")
+    return 0
+
+
 def main() -> None:
     common = _common_parser()
     parser = argparse.ArgumentParser(
@@ -251,6 +301,12 @@ def main() -> None:
     cal.add_argument("--data-dir", type=str, default=None)
     cal.add_argument("--subsample", type=int, default=None)
     cal.set_defaults(func=cmd_calibrate)
+
+    stream = sub.add_parser("stream", parents=[_common_parser(suppress=True)],
+                            help="re-deliver hot entities day-by-day with "
+                                 "streaming problems (online lane)")
+    stream.add_argument("--tick-seconds", type=float, default=None)
+    stream.set_defaults(func=cmd_stream)
 
     ns = parser.parse_args()
     if ns.command is None:

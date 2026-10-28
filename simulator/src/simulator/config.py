@@ -159,6 +159,57 @@ class ProblemConfig:
 
 
 @dataclass
+class StreamBurstConfig:
+    """Burst traffic: volume spikes every N ticks (0 disables)."""
+
+    every_n_ticks: int = 0
+    multiplier: int = 3
+
+
+@dataclass
+class StreamReplayConfig:
+    """Duplicate replay (at-least-once re-delivery) of day bundles."""
+
+    rate: float = 0.0
+    history_size: int = 1000
+
+
+@dataclass
+class StreamLateConfig:
+    """Late arrival: fraction of rows with event timestamps in the past."""
+
+    rate: float = 0.0
+    delay_minutes_min: int = 5
+    delay_minutes_max: int = 45
+
+
+@dataclass
+class StreamProblemsConfig:
+    burst: StreamBurstConfig = field(default_factory=StreamBurstConfig)
+    duplicate_replay: StreamReplayConfig = field(
+        default_factory=StreamReplayConfig)
+    late_arrival: StreamLateConfig = field(default_factory=StreamLateConfig)
+
+
+@dataclass
+class StreamEmitConfig:
+    """Online emitter pacing knobs."""
+
+    grain: str = "day"        # delivery grain: 'day' (per-tick later)
+    tick_seconds: float = 0.0  # wall-clock pacing; 0 = fast-forward
+
+
+@dataclass
+class StreamingConfig:
+    """Online (stream) lane: per-day re-delivery of hot entities."""
+
+    enabled: bool = False
+    emit: StreamEmitConfig = field(default_factory=StreamEmitConfig)
+    problems: StreamProblemsConfig = field(
+        default_factory=StreamProblemsConfig)
+
+
+@dataclass
 class SinkConfig:
     """Output sink configuration (file / S3 / Postgres).
 
@@ -195,6 +246,7 @@ class SimConfig:
     entities: EntityConfig = field(default_factory=EntityConfig)
     time: TimeConfig = field(default_factory=TimeConfig)
     problems: ProblemConfig = field(default_factory=ProblemConfig)
+    streaming: StreamingConfig = field(default_factory=StreamingConfig)
     sinks: SinkConfig = field(default_factory=SinkConfig)
     seed: int = 42
     run_id: str = "default"
@@ -218,6 +270,7 @@ class SimConfig:
         self.entities = EntityConfig()
         self.time = TimeConfig()
         self.problems = ProblemConfig()
+        self.streaming = StreamingConfig()
         self.sinks = SinkConfig()
         self.seed = 42
         self.run_id = "default"
