@@ -30,6 +30,7 @@ from simulator.entities import (
 from simulator.params import Params
 from simulator.problems import ProblemInjector
 from simulator.quality import QualityValidator
+from simulator.randstreams import month_rng
 from simulator.sinks import SinkManager
 from simulator.state import AccountLedger, draw_from_model
 
@@ -150,6 +151,7 @@ class Simulator:
         self.params = Params()
         self.ledger = AccountLedger(
             self.params, self._rng,
+            root_seed=self.seed,
             target_default_rate=self.cfg.entities.target_default_rate,
             performance_window=self.cfg.entities.performance_window_months,
             trigger_months=self.cfg.entities.default_trigger_months)
@@ -313,11 +315,13 @@ class Simulator:
             self._originate_initial_accounts(clients)
             self._ledger_initialized = True
 
-        # Stream: loan applications (pre-decision view + decision outcome)
+        # Stream: loan applications (pre-decision view + decision outcome).
+        # Per-month stream: the month's applications are a pure function of
+        # (seed, "applications", month) and replay byte-identically.
         applications, decisions, approvals = generate_loan_applications(
             self.engine, clients, F, month, self.params,
             monthly_app_rate=self.cfg.entities.monthly_app_rate,
-            rng=self._rng,
+            rng=month_rng(self.seed, "applications", month),
         )
         self.ledger.originate_loans(approvals)
         # Unified master table: submitted + decision joined on application_id
@@ -347,7 +351,7 @@ class Simulator:
                 auths_per_card_per_day=self.cfg.entities.auths_per_card_per_day,
                 decline_rate=self.cfg.entities.auth_decline_rate,
                 merchant_categories=self.cfg.entities.merchant_categories,
-                rng=self._rng,
+                rng=month_rng(self.seed, "card_auths", month),
                 card_ids=[c.card_id for c in self.ledger.cards],
                 client_factors=F,
             )
@@ -368,14 +372,14 @@ class Simulator:
         bureau = self.ledger.emit_bureau(month)
         payments = pl.DataFrame(payment_rows)
 
-        # Inject data problems
-        clients = self.injector.apply(clients, "client")
-        applications = self.injector.apply(applications, "application")
-        card_auths = self.injector.apply(card_auths, "card_auth")
-        pos_balances = self.injector.apply(pos_balances, "pos_balance")
-        card_balances = self.injector.apply(card_balances, "card_balance")
-        bureau = self.injector.apply(bureau, "bureau")
-        payments = self.injector.apply(payments, "payment")
+        # Inject data problems (per-(entity, month) deterministic stream)
+        clients = self.injector.apply(clients, "client", month)
+        applications = self.injector.apply(applications, "application", month)
+        card_auths = self.injector.apply(card_auths, "card_auth", month)
+        pos_balances = self.injector.apply(pos_balances, "pos_balance", month)
+        card_balances = self.injector.apply(card_balances, "card_balance", month)
+        bureau = self.injector.apply(bureau, "bureau", month)
+        payments = self.injector.apply(payments, "payment", month)
 
         # Validate (per-entity + referential integrity)
         issues = self.validator.validate_batch(

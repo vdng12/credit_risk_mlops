@@ -19,6 +19,7 @@ from scipy.special import expit, logit
 
 from simulator.constants import LATENT_DEFAULT_PROPENSITY
 from simulator.params import Params
+from simulator.randstreams import month_rng
 
 
 # ---------------------------------------------------------------------------
@@ -219,12 +220,14 @@ class AccountLedger:
         self,
         params: Params,
         rng: Generator,
+        root_seed: int | None = None,
         target_default_rate: float = 0.08,
         performance_window: int = 12,
         trigger_months: int = 3,
     ) -> None:
         self.p = params
         self.rng = rng
+        self.root_seed = root_seed
         self.fidx = params.factor_idx
         self.loans: list[Loan] = []
         self.cards: list[Card] = []
@@ -379,7 +382,14 @@ class AccountLedger:
         Returns the payment rows produced this month (one per active loan
         installment due), so the final installment is emitted exactly once
         and paid-off loans stop producing payments.
+
+        Phase 0: the month's draws come from a stream derived from
+        (root_seed, "ledger", month) instead of the sequential bootstrap
+        tape, so each month replays byte-identically on its own.
         """
+        if self.root_seed is not None:
+            month = payment_date.replace(day=1)
+            self.rng = month_rng(self.root_seed, "ledger", month)
         p = self.p
         payment_rows: list[dict] = []
 

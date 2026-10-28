@@ -6,9 +6,13 @@ schema drift, late arrivals, and column swaps.
 
 from __future__ import annotations
 
+from datetime import date
+
 import numpy as np
 import polars as pl
 from numpy.random import Generator
+
+from simulator.randstreams import month_rng
 
 
 class ProblemInjector:
@@ -16,16 +20,28 @@ class ProblemInjector:
 
     def __init__(self, config, seed: int = 42) -> None:
         self.cfg = config
+        self._root_seed = int(seed)
         self._rng: Generator = np.random.default_rng(seed)
 
-    def apply(self, df: pl.DataFrame, entity_type: str) -> pl.DataFrame:
+    def apply(
+        self, df: pl.DataFrame, entity_type: str, month: date | None = None
+    ) -> pl.DataFrame:
         """Apply all enabled problems to a DataFrame.
 
         entity_type: 'client', 'application', 'card_auth', 'pos_balance',
                      'card_balance', 'bureau', or 'payment'.
+
+        Phase 0: when a month is given, this (entity, month)'s corruption
+        is a pure function of the root seed - re-applying it to the same
+        clean frame reproduces the same dirty frame.
         """
         if not self.cfg.problems.enabled:
             return df
+
+        if month is not None:
+            self._rng = month_rng(
+                self._root_seed, f"problems:{entity_type}", month
+            )
 
         rate = getattr(self.cfg.problems, f"{entity_type}_missing_rate", 0.01)
         df = self._inject_missing(df, rate)
