@@ -257,3 +257,63 @@ Plan (when the online path is built):
   day-by-day for full fidelity. Documented and tested.
 
 Emitters (Phase 5) can now tick day-by-day and flush on the three flags.
+
+---
+
+## 13. Real-time modes and the event_timestamp / ingestion_ts split
+
+### How the clock relates to "real time" (it doesn't push anything)
+
+The clock is a **pretend calendar inside the generator**. It never leaves
+the process and never calls anything - it answers "what simulated date is
+it?" and "which boundaries fired?". The direction of control is:
+
+```
+scheduler/orchestrator (outside, wall-clock)
+        |  invokes
+        v
+generator -> SimClock.tick() -> emits rows
+        |
+        v
+postgres -> Debezium CDC -> Redpanda topics   <- the REAL event stream
+        |
+        v
+Flink consumers
+```
+
+- Orchestrator (later: Dagster) DRIVES the generator (schedule or sensor).
+- The clock paces *within* a run; it is not an event source to the
+  orchestrator.
+- The event stream consumers care about is the generated data flowing
+  through CDC - not the clock.
+
+### The three real-time modes (a pacing knob, not a design fork)
+
+| Mode            | Mechanism                                  | Feels like |
+|-----------------|--------------------------------------------|------------|
+| fast-forward    | tight loop, tick(1) per iteration          | 12 months of data streams in seconds (tests, batch) |
+| throttled       | time.sleep(tick_seconds) between ticks     | visible live feed (Flink window/watermark + drift API demos) |
+| scheduled       | one real day = one simulated step (cron)  | true wall-clock bank rhythm (nightly file 02:00, monthly close) |
+
+Same clock code in all three - only the caller's pacing differs.
+
+### event_timestamp (simulated) vs ingestion_ts (real)
+
+`event_timestamp` values are simulated (dates inside the fictional
+timeline). The postgres write moment - what CDC stamps as ingestion time -
+is **real wall-clock time**. That split is deliberate:
+
+- clean stream: Flink sees events arriving with ingestion ~= event time,
+  ordered, no gap (fast-forward or throttled).
+- late arrivals (Phase 5 problem): event time in the simulated past,
+  ingestion time now - Flink watermarks see exactly the gap the rubric
+  wants handled.
+- windowing correctness: consumers must use EVENT time for windows/as-of
+  features, and ingestion time for availability/watermarks. A late event
+  belongs to its event-time window but must not be used in an as-of
+  feature computed before it arrived (the point-in-time discipline).
+
+Determinism note: event_timestamp is fully derived from (seed, entity,
+month, day, slot) under Phase 0. ingestion_ts is NOT reproducible - it is
+the real wall clock at write time. Do not assert on it; do assert that
+event_timestamp never moves.
