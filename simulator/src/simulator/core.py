@@ -372,7 +372,23 @@ class Simulator:
         bureau = self.ledger.emit_bureau(month)
         payments = pl.DataFrame(payment_rows)
 
-        # Inject data problems (per-(entity, month) deterministic stream)
+        # Inject data problems - clean-then-inject, one entity, one month.
+        #
+        # The entity generators above produced CLEAN, relationally
+        # consistent frames; contamination is a separate stage that never
+        # touches generation logic (see problems.py for the problem ->
+        # entity scope contract - e.g. schema evolution is bureau-only,
+        # exact duplicates are payments/applications only).
+        #
+        # application_decisions / application_master are deliberately NOT
+        # injected: decisions is a derived outcome frame and master is the
+        # join of applications + decisions, so the stream entities are the
+        # single injection point - corrupting the derived views would
+        # double-corrupt or break the join.
+        #
+        # Each apply() derives its corruption stream from
+        # (root seed, entity, month) so the same clean month always yields
+        # the same dirty month (Phase 0 indexed determinism).
         clients = self.injector.apply(clients, "client", month)
         applications = self.injector.apply(applications, "application", month)
         card_auths = self.injector.apply(card_auths, "card_auth", month)
