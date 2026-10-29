@@ -7,16 +7,18 @@ requires-python = ">=3.13"
 dependencies = [
     "simulator",
     "nbformat>=5.11.1",
+    "kagglehub>=1.0.3",
 ]
 
 [dependency-groups]
-dev = ["pytest>=8.0"]
-eval = [
-    "lightgbm>=4.6",
-    "kagglehub>=0.3",
-    "scikit-learn>=1.6",
+dev = [
+    "pytest>=8.0",
     "numpy>=2.0",
     "polars>=1.0",
+    "lightgbm>=4.6",
+    "scikit-learn>=1.6",
+    "matplotlib>=3.11.2",
+    "seaborn>=0.13.2",
 ]
 
 [tool.uv]
